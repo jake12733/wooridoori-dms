@@ -77,8 +77,8 @@
       sessionStorage.removeItem(SID_KEY);
       sessionStorage.setItem('wd_logout_reason', reason);
       document.body.classList.remove('staff-mode', 'ceo-mode');
-      location.hash = '#/login';
-      if (WD.app) WD.app.route();
+      document.getElementById('modal-root').innerHTML = '';
+      if (location.hash === '#/login') WD.app?.route(); else location.hash = '#/login';
     },
 
     /** 세션 감시: 다른 탭에서 퇴사 처리 → 이 탭 즉시 차단 */

@@ -1,0 +1,197 @@
+# 우리두리사회적협동조합 문서관리시스템 — 시스템 아키텍처
+
+> 협동조합 및 연계 기관·교육 현장을 위한 통합 문서 · 계약 · 근태 · 보안 · 경영 관리 시스템
+> 라이브 데모(MVP): https://jake12733.github.io/wooridoori-dms/
+
+---
+
+## 1. 단계별 구성 개요
+
+| 단계 | 산출물 | 위치 |
+|---|---|---|
+| 1. 요구사항 → 역할·권한 모델 | CEO / STAFF / RESIGNED, 폴더 ACL, 반출 게이트 | 본 문서 §3, `security-rules.md` |
+| 2. 전체 아키텍처 | 클라이언트 · API · DB(app/vault/audit) · 스토리지 | 본 문서 §2 |
+| 3. 폴더 구조 | 프론트(MVP) + 서버 레퍼런스 | 본 문서 §5 |
+| 4. DB 스키마 | PostgreSQL + RLS + 트리거 + 퇴사 프로시저 | `schema.sql` |
+| 5. 보안 규칙 | 다운로드 차단 · 감사 로그 · 퇴사자 통제 | `security-rules.md` |
+| 6. 핵심 UI/컴포넌트 (MVP) | 정적 SPA, 실제 동작 | `index.html`, `assets/` |
+| 7. 샘플 데이터 | 직원 7명, 문서 30+건, 계약 5건, 근태 2개월, 매출 6개월 | `assets/js/core/seed.js` |
+| 8. 운영 전환 | 서버 API·미들웨어·라우트 레퍼런스 | `server/` |
+
+---
+
+## 2. 시스템 아키텍처
+
+```
+┌──────────────────────────── 브라우저 (SPA) ────────────────────────────┐
+│  역할별 UI (해시 라우터)                                                │
+│  ├─ 통합 문서함 · 뷰어/편집기 · 템플릿 · 원클릭 발송 · 워크플로우       │
+│  ├─ 체크리스트 · 계약서(서명/직인) · 근태 · 대표 대시보드/런처          │
+│  ├─ 웹 오피스: x-spreadsheet+SheetJS │ Quill 2 │ rhwp(WASM, iframe)     │
+│  └─ 반출 억제 계층: 워터마크 · 우클릭/복사/인쇄/저장키 차단 · 버튼 잠금 │
+└───────────────┬────────────────────────────────────────────────────────┘
+                │ HTTPS · HttpOnly+Secure+SameSite=Strict 세션 쿠키 · CSRF 토큰
+┌───────────────▼──────────────── API 서버 (Node/Express) ────────────────┐
+│ auth 미들웨어: 매 요청 세션 해시 조회 → revoked/expired/status 재검증   │
+│ RBAC + 폴더 ACL 엔진 (CEO/STAFF/RESIGNED)                               │
+│ 반출 게이트: CEO에게만 60초 서명 URL 발급, 직원은 서버 렌더 스트림만     │
+│ 워크플로우 전이 · 원클릭 발송 · 알림(WebSocket/SSE) · 만료 알림 크론     │
+│ audit 미들웨어: 모든 민감 행위 append-only 기록                          │
+└───────┬───────────────────────┬──────────────────────┬──────────────────┘
+        │ SET LOCAL app.user_id │ SET ROLE wd_vault     │
+┌───────▼────────┐   ┌──────────▼──────────┐   ┌───────▼────────────────┐
+│ PostgreSQL app │   │ PostgreSQL vault     │   │ 오브젝트 스토리지        │
+│ 문서·버전·계약 │   │ 대표 전용 보관 DB     │   │ private 버킷(원본)       │
+│ 근태·발송·알림 │   │ pgp 암호화 payload    │   │ vault 버킷(퇴사자 원본)  │
+│ + RLS          │   │ 보존기한·근거         │   │ 공개 URL 없음            │
+└────────────────┘   └─────────────────────┘   └─────────────────────────┘
+        └──────────── audit.logs (append-only, 해시 체인) ───────────┘
+```
+
+### MVP(현재 데모) 매핑
+GitHub Pages 정적 호스팅이라 서버가 없으므로 같은 흐름을 브라우저 안에서 재현합니다.
+
+| 운영 구성요소 | MVP 대체 | 파일 |
+|---|---|---|
+| PostgreSQL `app` | `localStorage['wd_db_v1']` (테이블 구조 동일) | `core/db.js` |
+| PostgreSQL `vault` | 분리된 키 `localStorage['wd_vault_v1']`, CEO 검증 후만 읽기 | `core/db.js` (`WD.vault`) |
+| 오브젝트 스토리지 | IndexedDB `wd_files_v1` | `core/filestore.js` |
+| 세션 테이블 + 미들웨어 | `sessions` 테이블 + 탭별 sessionStorage SID + 4초 재검증 + storage 이벤트 | `core/auth.js` |
+| 반출 게이트 | `WD.sec.exportDoc()` 단일 관문 (CEO 아니면 거부·기록) | `core/security.js` |
+| 전이 트리거 | `WD.wf.transition()` 허용 전이표 | `core/workflow.js` |
+
+> 브라우저 측 차단은 **억제·기록** 수단입니다. 운영에서는 서버 권한 검증(§security-rules)이 최종 방어선입니다.
+
+---
+
+## 3. 역할 · 권한 모델
+
+| 기능 | CEO (대표) | STAFF (선생님/행정) | RESIGNED (퇴사자) |
+|---|---|---|---|
+| 로그인 | ✔ | ✔ | ✖ 즉시 차단 |
+| 지정 폴더 문서 웹 열람 | ✔ 전체 | ✔ 폴더 ACL(`view`/`edit`) + 본인 작성·담당·수신 문서 | ✖ |
+| 웹 편집(새 버전 저장) | ✔ (잠금 제외) | ✔ `edit` 폴더 / 본인 문서 (잠금 제외) | ✖ |
+| 다운로드·인쇄·복사·내보내기 | ✔ (감사 기록) | ✖ 차단 + 시도 기록 | ✖ |
+| 결재 승인 · 보완 요청(반려) | ✔ | ✖ | ✖ |
+| 원클릭 발송 | ✔ | ✔ | ✖ |
+| 계약서 작성 · 직인 날인 | ✔ | 본인 계약 전자서명만 | ✖ |
+| 근태 | 전 직원 조회·수정·대강 지정 | 본인 출퇴근 · 병가/휴가 신청 | ✖ |
+| 경영 대시보드 · 런처 · 장부 | ✔ | ✖ | ✖ |
+| 보관 DB · 감사 로그 | ✔ (열람도 기록) | ✖ (시도 기록) | ✖ |
+
+### 폴더 기본 ACL (샘플)
+| 폴더 | 하위 | 직원 권한 | 법정 보관 |
+|---|---|---|---|
+| 인사 | 근로계약 · 위촉계약 · 인사기록·제출서류 | 대표 전용 (본인 서류만) | ✔ |
+| 인사 | 증명서·확인서 | 열람 | |
+| 문서 | 공문·안내문 · 보고서 · 출석부 | 열람·웹 편집 | |
+| 문서 | 회의록 | 열람 | |
+| 회계 | 매출 | 대표 전용 | |
+| 회계 | 지출·증빙 · 정산 | 열람·웹 편집 | ✔ |
+| 보안 | 보안서약 | 열람 | |
+| 보안 | 개인정보 | 대표 전용 | |
+
+---
+
+## 4. 무료 웹 오피스 구성
+
+| 형식 | 엔진(라이선스) | 지원 | 가져오기/내보내기 |
+|---|---|---|---|
+| 스프레드시트 | x-data-spreadsheet (MIT) + SheetJS CE (Apache-2.0) | 수식(SUM·AVERAGE·MAX·MIN·IF·CONCAT…), 셀 서식, 병합, 행/열 삽입·삭제, 다중 시트 | `.xlsx` `.xls` `.csv` 가져오기 / `.xlsx` `.csv` 내보내기(대표) |
+| 문서(워드형) | Quill 2 (BSD-3) | 글꼴 5종, 크기, 제목, 굵게/기울임/밑줄/취소선, 색, 정렬, 목록, 들여쓰기, 링크, 이미지, 표 삽입·행/열 편집 | `.docx` 가져오기(mammoth) / PDF(html2pdf.js)·`.doc` 내보내기(대표) |
+| 한글 | rhwp `@rhwp/editor` (MIT, Rust+WASM) | HWP 5.0 / HWPX 열람·편집, 표·서식, 저장 | `.hwp` `.hwpx` 열기 / `.hwp` `.hwpx` 저장(버전), 내보내기(대표) |
+| PDF·이미지 | PDF.js (Apache-2.0) | 캔버스 렌더 보안 뷰어(텍스트 선택·다운로드 버튼 없음) | — |
+
+**업그레이드 경로**: 스프레드시트는 Univer(Apache-2.0) 프리셋, 문서는 TipTap(MIT)+Y.js 실시간 협업으로 교체 가능하도록 에디터를 `mount(el, content, {readOnly}) → {getData|getHTML, destroy}` 공통 인터페이스로 분리했습니다.
+**HWP 주의**: 복잡한 서식(다단·개체 배치 등)은 양식 템플릿과 PDF 확인을 병행합니다. 운영 시 rhwp-studio를 자체 호스팅하고 직원용 빌드에서 저장/인쇄 커맨드를 제거합니다.
+
+---
+
+## 5. 폴더 구조
+
+```
+wooridoori-dms/
+├─ index.html                     # 앱 진입점 (브랜딩, 스크립트 로드)
+├─ assets/
+│  ├─ css/app.css                 # 디자인 시스템 · 반응형 · 인쇄 차단
+│  └─ js/
+│     ├─ core/
+│     │  ├─ db.js                 # LocalDB, 감사 로그, 알림, 보관 DB(vault) 분리 저장소
+│     │  ├─ seed.js               # 샘플 데이터 (오늘 기준 상대 날짜)
+│     │  ├─ filestore.js          # IndexedDB 파일 저장소 (운영: 비공개 버킷)
+│     │  ├─ auth.js               # 로그인 · 세션 · 즉시 강제 로그아웃 · 세션 회수
+│     │  ├─ security.js           # 권한 판정 · 반출 게이트 · 워터마크 · 복사/인쇄/우클릭 차단
+│     │  └─ workflow.js           # 상태 전이 · 버전 · 원클릭 발송 · 만료 알림 · 체크리스트 집계
+│     ├─ editors/
+│     │  ├─ sheet.js              # 엑셀형 (x-spreadsheet + SheetJS, 수식 계산기)
+│     │  ├─ doc.js                # 워드형 (Quill 2, docx 가져오기, PDF/doc 출력)
+│     │  └─ hwp.js                # 한글형 (rhwp WASM)
+│     ├─ views/
+│     │  ├─ dashboard.js          # 대표 경영 대시보드 / 직원 내 업무
+│     │  ├─ docs.js               # 통합 문서함 · 뷰어/편집기 · 새 문서 · 템플릿 · 발송 메뉴
+│     │  ├─ workflow.js           # 수신함 · 결재/보완 보드 · 필수 서류 체크리스트
+│     │  ├─ hr.js                 # 계약서(서명·직인·갱신) · 근태 · 인사/퇴사 위저드
+│     │  └─ admin.js              # 장부 · 보관 DB · 감사 로그 · 런처 · 시스템 설계
+│     ├─ ui.js                    # 아이콘 · 모달 · 토스트 · 배지 · CDN 지연 로딩
+│     └─ app.js                   # 셸 · 라우터 · 로그인 · 역할별 메뉴
+├─ docs/
+│  ├─ ARCHITECTURE.md             # (본 문서)
+│  ├─ schema.sql                  # PostgreSQL 스키마 + RLS + 트리거 + 퇴사 프로시저
+│  └─ security-rules.md           # 보안 규칙
+└─ server/                        # 운영 전환용 API 레퍼런스 (Node 20 / Express)
+   ├─ README.md
+   ├─ package.json
+   └─ src/
+      ├─ app.js
+      ├─ db.js
+      ├─ middleware/{auth.js, audit.js, rbac.js}
+      ├─ routes/{files.js, documents.js, users.js}
+      └─ jobs/expiryAlerts.js
+```
+
+---
+
+## 6. 핵심 흐름
+
+### 6.1 문서 열람·편집
+1. `GET /documents/:id` → RLS `doc_access()`로 `none/view/edit` 판정 → `DOC_VIEW` 감사 기록
+2. 직원: 서버가 내용(JSON/HTML) 또는 렌더 결과만 전달, **원본 파일 URL 미발급**
+3. 저장 = `document_versions` INSERT (v+1), 잠금 문서는 트리거가 거부 → `DOC_EDIT (v1→v2)` 기록
+
+### 6.2 원클릭 발송
+프리셋(`대표에게 결재·제출` / `○○ 선생님께 서명·보완 요청` / `폴더 저장·공유` / `전체·부서 발송`) 클릭 →
+상태 자동 전이(DRAFT→PENDING, REVISION_REQUIRED→RESUBMITTED) → `document_recipients` 권한 부여 → 알림 생성(실시간 푸시) → `dispatches` + `DISPATCH` 감사 기록. 한 번의 트랜잭션.
+
+### 6.3 서류 보완 워크플로우
+```
+DRAFT ──제출──▶ PENDING ──보완 요청(사유 필수)──▶ REVISION_REQUIRED
+                   │                                   │ 수정 → v+1 저장(필수)
+                   │                                   ▼
+                   └──────승인──▶ APPROVED ◀──승인── RESUBMITTED
+                              (잠금, 수정 불가)   └──보완 요청──▶ REVISION_REQUIRED
+```
+타임라인 = 버전 + 전이 이벤트 + 발송 이력 병합.
+
+### 6.4 퇴사 처리
+① 미결 문서(작성·담당) 목록 → 인수자 지정 + 인계 확인(전부 체크해야 진행)
+② 퇴사 체크리스트(면담·지급품·자료 삭제 확약·정산)
+③ 확정 트랜잭션: 계정 `RESIGNED` → 세션 전부 `revoked_at` → 공유·프리셋 권한 회수 → 계약서·근태·승인된 회계/정산·인사 제출서류를 vault로 이관(보존 기한·근거 기록) 후 일반 영역에서 삭제 → 감사 로그 3건
+④ 다른 기기/탭: 다음 요청(운영) 또는 4초 내(MVP) 강제 로그아웃, 재로그인 시 `LOGIN_BLOCKED`
+
+### 6.5 계약서 · 만료 알림
+초안(DRAFT) → 서명 요청(SENT) → 직원 캔버스 전자서명(SIGNED) → 대표 전자 직인(SEALED, 잠금, 완료본 PDF 해시 저장).
+매일 07:00 크론: `v_expiring` 조회 → D-30 / D-14 / D-7 버킷별 1회 알림(대표 + 당사자, `expiry_alerts_sent`로 중복 방지) → [갱신 초안] 클릭 시 기존 조건 복사 + 기간 1년 연장 DRAFT 생성.
+
+---
+
+## 7. 샘플 데이터 (데모 계정, 비밀번호 1234)
+
+| 아이디 | 이름 | 역할 | 시연 포인트 |
+|---|---|---|---|
+| ceo | 김우리 | CEO | 결재 6건, 만료 알림, 퇴사 처리, 보관 DB, 감사 로그, 반출 |
+| teacher1 | 이두리 | STAFF · 정규직 | 안내문 결재 대기, 보건증 D-30, 근로계약 D-30 |
+| teacher2 | 박하늘 | STAFF · 위촉강사 | 보고서 보완 요청 → 수정 → 재제출, 위촉계약 D-14 |
+| teacher3 | 최은솔 | STAFF · 위촉강사 | 미결 문서 3건 → 퇴사 인수인계 시연, 위촉계약 D-7 |
+| admin1 | 정민지 | STAFF · 행정 | 정산표 재제출(v2), 서류 보완 대기 |
+| teacher4 | 강서준 | STAFF · 정규직 | 갱신 근로계약서 서명 대기 |
+| former | 한지훈 | RESIGNED | 로그인 차단, 보관 DB 기록 3건 |

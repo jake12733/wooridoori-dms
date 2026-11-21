@@ -1,0 +1,24 @@
+{
+  "name": "wooridoori-dms-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "우리두리사회적협동조합 문서관리시스템 API 레퍼런스",
+  "type": "module",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "job:expiry": "node src/jobs/expiryAlerts.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@aws-sdk/s3-request-presigner": "^3.600.0",
+    "argon2": "^0.40.3",
+    "cookie-parser": "^1.4.6",
+    "express": "^4.19.2",
+    "helmet": "^7.1.0",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^3.0.3",
+    "pg": "^8.12.0"
+  }
+}

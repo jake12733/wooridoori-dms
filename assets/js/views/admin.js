@@ -52,12 +52,13 @@
     WD.auditTx('VAULT_VIEW', { type: 'vault', name: q.u ? WD.userName(q.u) : '전체' }, `보관 DB 목록 열람 (${vault.records.length}건)`);
     const recs = vault.records.filter((r) => !q.u || r.userId === q.u).sort((a, b) => (a.movedAt < b.movedAt ? 1 : -1));
     const people = [...new Set(vault.records.map((r) => r.userId))];
-    const KIND = { contract: ['계약서', 'contract'], attendance: ['근태', 'clock'], document: ['정산·인사 서류', 'doc'] };
+    const KIND = { contract: ['계약서', 'contract'], attendance: ['근태', 'clock'], document: ['서류', 'doc'] };
+    const kindLabel = (r) => (r.kind === 'document' ? (/국세/.test(r.basis || '') ? '회계·정산' : '인사 서류') : KIND[r.kind][0]);
     el.innerHTML = `<div class="page">
       <div class="page-head"><div><h1>법정 보관 DB <span class="tag lock">${I('lock', 'xs')} 대표 전용</span></h1><p class="muted">퇴사자의 계약서·근태·정산 기록 등 법적 보관 의무 자료를 일반 열람 영역과 분리해 보관합니다. 별도 저장소(운영: 별도 스키마·암호화·RLS)로 격리되며 열람도 감사 로그에 기록됩니다.</p></div></div>
       <div class="chips"><a class="chip ${!q.u ? 'active' : ''}" href="#/vault">전체 <em>${vault.records.length}</em></a>${people.map((id) => { const r = vault.records.find((x) => x.userId === id); return `<a class="chip ${q.u === id ? 'active' : ''}" href="#/vault?u=${id}">${esc(r.userName)} <em>${vault.records.filter((x) => x.userId === id).length}</em></a>`; }).join('')}</div>
       <div class="card flush"><table class="tbl"><thead><tr><th>구분</th><th>기록</th><th>대상자</th><th>이관일</th><th>보존 기한</th><th>근거</th><th class="r"></th></tr></thead><tbody>
-      ${recs.map((r) => { const left = WD.daysLeft(r.retainUntil); return `<tr><td>${I(KIND[r.kind][1])} ${KIND[r.kind][0]}</td><td><b>${esc(r.title)}</b></td><td>${esc(r.userName)}</td><td class="nowrap">${WD.fmtDT(r.movedAt)}</td><td class="nowrap">${r.retainUntil} ${left < 0 ? '<span class="tag danger">파기 대상</span>' : `<small class="muted">(${Math.ceil(left / 365 * 10) / 10}년 남음)</small>`}</td><td class="tiny muted">${esc(r.basis || '')}</td><td class="r nowrap"><button class="btn sm ghost" data-open="${r.id}">${I('eye')} 열람</button></td></tr>`; }).join('') || `<tr><td colspan="7">${WD.ui.empty('보관된 기록이 없습니다.', 'vault')}</td></tr>`}
+      ${recs.map((r) => { const left = WD.daysLeft(r.retainUntil); return `<tr><td class="nowrap">${I(KIND[r.kind][1])} ${kindLabel(r)}</td><td><b>${esc(r.title)}</b></td><td class="nowrap">${esc(r.userName)}</td><td class="nowrap">${WD.fmtDT(r.movedAt)}</td><td class="nowrap">${r.retainUntil} ${left < 0 ? '<span class="tag danger">파기 대상</span>' : `<small class="muted">(${(left / 365).toFixed(1)}년 남음)</small>`}</td><td class="tiny muted">${esc(r.basis || '')}</td><td class="r nowrap"><button class="btn sm ghost" data-open="${r.id}">${I('eye')} 열람</button></td></tr>`; }).join('') || `<tr><td colspan="7">${WD.ui.empty('보관된 기록이 없습니다.', 'vault')}</td></tr>`}
       </tbody></table></div></div>`;
     el.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', async () => {
       const r = vault.records.find((x) => x.id === b.dataset.open);

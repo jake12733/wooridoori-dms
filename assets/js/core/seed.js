@@ -5,10 +5,14 @@
  * ========================================================================= */
 (function () {
   const WD = window.WD;
-  const SCHEMA_VERSION = 3;
+  const SCHEMA_VERSION = 4;
 
   // 결정적 의사난수 (같은 날짜/사용자면 같은 값)
-  const hash = (s) => { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967295; };
+  const hash = (s) => {
+    let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); }
+    h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16;
+    return (h >>> 0) / 4294967295;
+  };
 
   const sheet = (name, aoa, opts = {}) => {
     const rows = {};

@@ -211,7 +211,7 @@
           <tbody id="doc-rows">${list.map((d) => `<tr data-title="${esc(d.title.toLowerCase())}">
             <td class="click" data-href="#/doc/${d.id}"><div class="doc-name">${WD.ui.kindIcon(d.kind)}<span><b>${esc(d.title)}</b><small>${WD.ui.KIND_LABEL[d.kind]}${d.locked ? ' · ' + I('lock', 'xs') + '잠금' : ''} · ${WD.sec.ACCESS_LABEL[WD.sec.level(d, u)]}</small></span></div></td>
             <td class="muted">${esc(WD.folderPath(d.folderId))}</td><td>${WD.ui.status(d.status)}</td><td><span class="ver">v${d.version}</span></td>
-            <td>${esc(WD.userName(d.ownerId))}</td><td class="muted nowrap">${WD.fmtDT(d.updatedAt)}</td>
+            <td class="nowrap">${esc(WD.userName(d.ownerId))}</td><td class="muted nowrap">${WD.fmtDT(d.updatedAt)}</td>
             <td class="r nowrap"><a class="btn sm ghost" href="#/doc/${d.id}">${I(WD.sec.canEdit(d, u) ? 'pen' : 'eye')} ${WD.sec.canEdit(d, u) ? '편집' : '열람'}</a>
               <button class="btn sm ${canExport ? 'ghost' : 'locked'}" data-export="${d.id}" title="${canExport ? '외부 반출 (기록됨)' : '대표만 반출 가능 — 다운로드 차단'}">${I(canExport ? 'download' : 'lock')}</button></td></tr>`).join('')}</tbody></table>
           ${list.length ? '' : WD.ui.empty('이 폴더에 표시할 문서가 없습니다.', 'folder')}
