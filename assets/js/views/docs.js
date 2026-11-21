@@ -201,7 +201,7 @@
    * ===================================================================== */
   // 기존 세부 항목 (🔒 대표 전용 아래 서브 항목으로 유지)
   WD.SUB_ITEMS = ['근로계약', '위촉계약', '인사기록·제출서류', '증명서·확인서', '공문·안내문', '보고서', '출석부', '회의록', '매출', '지출·증빙', '정산', '보안서약', '개인정보'];
-  WD.CEO_LINKS = [['#/finance', '경영·매출 장부', 'chart'], ['#/docs/c_ceo', '대표 전용 보안 폴더', 'lock'], ['#/vault', '퇴사자 보관함', 'vault'], ['#/audit', '보안 기록(감사 로그)', 'audit'], ['#/launcher', '바로가기 관리', 'rocket'], ['#/people', '직원·계정 관리', 'users'], ['#/contracts', '근로·위촉계약서', 'contract']];
+  WD.CEO_LINKS = [['#/finance', '경영·매출 장부', 'chart'], ['#/docs/c_ceo', '대표 전용 보안 폴더', 'lock'], ['#/workflow', '└ 결재·보완', 'flow'], ['#/vault', '퇴사자 보관함', 'vault'], ['#/audit', '보안 기록(감사 로그)', 'audit'], ['#/launcher', '바로가기 관리', 'rocket'], ['#/people', '직원·계정 관리', 'users'], ['#/contracts', '근로·위촉계약서', 'contract']];
 
   V.docs = (el, params, query, u) => {
     const db = WD.db;

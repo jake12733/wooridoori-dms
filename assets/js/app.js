@@ -15,7 +15,6 @@
     { path: '/dashboard', label: '대시보드', icon: 'home', roles: CEO },
     { path: '/docs', label: '통합 문서함', icon: 'folder', roles: ALL },
     { path: '/attendance', label: '출결·근태', icon: 'clock', roles: ['manager', 'staff'] }, // 실장·직원: 본인 출결 체크용 단독 메뉴
-    { path: '/workflow', label: '결재·보완', icon: 'flow', badge: 'wf', roles: CEO },
     { path: '/inbox', label: '알림함', icon: 'inbox', badge: 'inbox', roles: ALL },
     // 필수 서류(메인) > 근로·위촉계약서(서브)
     { path: '/checklist', label: '필수 서류', icon: 'list', roles: CHECK },
@@ -26,6 +25,7 @@
     { sec: '🔒 대표 전용', roles: CEO },
     { path: '/finance', label: '경영·매출 장부', icon: 'chart', roles: CEO },
     { path: '/docs/c_ceo', label: '대표 전용 보안 폴더', icon: 'lock', roles: CEO },
+    { path: '/workflow', label: '결재·보완', icon: 'flow', badge: 'wf', roles: CEO, sub: true, parent: '/docs/c_ceo' }, // 대표 전용 보안 폴더 > 결재·보완
     { path: '/vault', label: '퇴사자 보관함', icon: 'vault', roles: CEO },
     { path: '/audit', label: '보안 기록(감사 로그)', icon: 'audit', roles: CEO },
     { path: '/launcher', label: '바로가기 관리', icon: 'rocket', roles: CEO },
