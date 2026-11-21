@@ -8,17 +8,21 @@
   let cleanups = [];
   const ALL = ['ceo', 'admin', 'manager', 'staff'];
   const CEO = ['ceo', 'admin']; // 최고 권한: 대표·관리자 동일
+  const CHECK = ['ceo', 'admin', 'manager']; // 필수 서류: 대표·관리자·실장
 
   // 메뉴: roles에 포함된 직급에게만 보임 (라우트 권한과 동일)
   const NAV = [
     { path: '/dashboard', label: '대시보드', icon: 'home', roles: CEO },
     { path: '/docs', label: '통합 문서함', icon: 'folder', roles: ALL },
-    { path: '/attendance', label: '출결·근태', icon: 'clock', roles: ALL },
+    { path: '/attendance', label: '출결·근태', icon: 'clock', roles: ['manager', 'staff'] }, // 실장·직원: 본인 출결 체크용 단독 메뉴
     { path: '/workflow', label: '결재·보완', icon: 'flow', badge: 'wf', roles: CEO },
     { path: '/inbox', label: '알림함', icon: 'inbox', badge: 'inbox', roles: ALL },
-    { path: '/contracts', label: '근로·위촉계약서', icon: 'contract', badge: 'contract', roles: CEO },
-    { path: '/checklist', label: '필수 서류', icon: 'list', roles: ALL },
+    // 필수 서류(메인) > 근로·위촉계약서(서브)
+    { path: '/checklist', label: '필수 서류', icon: 'list', roles: CHECK },
+    { path: '/contracts', label: '근로·위촉계약서', icon: 'contract', badge: 'contract', roles: CEO, sub: true, parent: '/checklist' },
+    // 직원·계정 관리(메인) > 출결·근태(서브)
     { path: '/people', label: '직원·계정 관리', icon: 'users', roles: CEO },
+    { path: '/attendance', label: '출결·근태', icon: 'clock', roles: CEO, sub: true, parent: '/people' },
     { sec: '🔒 대표 전용', roles: CEO },
     { path: '/finance', label: '경영·매출 장부', icon: 'chart', roles: CEO },
     { path: '/docs/c_ceo', label: '대표 전용 보안 폴더', icon: 'lock', roles: CEO },
@@ -29,7 +33,7 @@
 
   const ROUTES = [
     ['/dashboard', 'dashboard', CEO], ['/docs', 'docs', ALL], ['/docs/:folder', 'docs', ALL], ['/doc/:id', 'docView', ALL], ['/new/:kind', 'newDoc', ALL],
-    ['/templates', 'templates', ALL], ['/inbox', 'inbox', ALL], ['/workflow', 'workflow', CEO], ['/checklist', 'checklist', ALL],
+    ['/templates', 'templates', ALL], ['/inbox', 'inbox', ALL], ['/workflow', 'workflow', CEO], ['/checklist', 'checklist', CHECK],
     ['/contracts', 'contracts', CEO], ['/contract/:id', 'contract', CEO], ['/attendance', 'attendance', ALL],
     ['/finance', 'finance', CEO], ['/people', 'people', CEO], ['/vault', 'vault', CEO], ['/audit', 'audit', CEO], ['/launcher', 'launcher', CEO],
     ['/system', 'system', CEO],
@@ -71,7 +75,7 @@
         || (n.path === '/docs' && (route.path.startsWith('/doc') || route.path.startsWith('/new')) && route.path !== '/docs/c_ceo')
         || (n.path === '/contracts' && route.path.startsWith('/contract'));
       const c = n.badge ? counts[n.badge] : 0;
-      return `<a class="nav-item ${active ? 'active' : ''}" href="#${n.path}">${I(n.icon)}<span>${n.label}</span>${c ? `<em class="nav-badge">${c}</em>` : ''}</a>`;
+      return `<a class="nav-item ${n.sub ? 'nav-sub' : ''} ${active ? 'active' : ''}" href="#${n.path}">${I(n.icon)}<span>${n.label}</span>${c ? `<em class="nav-badge">${c}</em>` : ''}</a>`;
     }).join('');
     const myNotes = WD.db.notifications.filter((n) => n.userId === u.id).slice(0, 7);
     return `

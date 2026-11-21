@@ -272,7 +272,8 @@
   V.checklist = (el, p, query, u) => {
     const db = WD.db;
     const isCEO = WD.isTop(u);
-    const people = isCEO ? WD.staffUsers() : [u];
+    const canSeeAll = isCEO || u.role === 'manager'; // 대표·관리자·실장: 전체 현황
+    const people = canSeeAll ? WD.staffUsers() : [u];
     const rows = people.map((x) => {
       const set = WD.wf.checklistFor(x);
       const items = set.items.map((it) => ({ it, ...WD.wf.submissionStatus(x.id, it) }));
@@ -296,21 +297,21 @@
 
     el.innerHTML = `<div class="page">
       <div class="page-head"><div><h1>유형별 필수 서류 체크리스트</h1><p class="muted">정규직·위촉강사 등 고용 유형별 필수 서류 세트를 설정하고, 인원별 미제출·보완 대기·완료 현황을 자동 집계합니다.</p></div>
-        ${isCEO ? `<button class="btn ghost" data-sets>${I('cog')} 필수 서류 세트 설정</button>` : ''}</div>
+        <div class="row gap-s">${isCEO ? `<a class="btn primary" href="#/contracts">${I('contract')} 근로·위촉계약서</a><button class="btn ghost" data-sets>${I('cog')} 필수 서류 세트 설정</button>` : ''}</div></div>
       ${sumCards}
-      ${isCEO ? `<div class="card flush scroll-x"><table class="tbl matrix"><thead><tr><th>직원</th><th>유형</th><th>진행률</th>${['MISSING', 'REVISION', 'REVIEW', 'DONE'].map((k) => `<th class="c">${WD.wf.SUB_STATUS[k].label}</th>`).join('')}<th>미완료 항목</th></tr></thead><tbody>
+      ${canSeeAll ? `<div class="card flush scroll-x"><table class="tbl matrix"><thead><tr><th>직원</th><th>유형</th><th>진행률</th>${['MISSING', 'REVISION', 'REVIEW', 'DONE'].map((k) => `<th class="c">${WD.wf.SUB_STATUS[k].label}</th>`).join('')}<th>미완료 항목</th></tr></thead><tbody>
         ${rows.map((r) => { const pct = (r.items.length ? Math.round((r.cnt.DONE / r.items.length) * 100) : 100); return `<tr class="click" data-person="${r.x.id}"><td><div class="row gap-s center">${WD.ui.avatar(r.x, 26)}<b>${esc(r.x.name)}</b><small class="muted">${esc(r.x.dept)}</small></div></td><td><span class="tag">${esc(r.x.empType)}</span></td>
           <td><div class="progress"><span style="width:${pct}%"></span></div><small>${pct}% (${r.cnt.DONE}/${r.items.length})</small></td>
           <td class="c">${r.cnt.MISSING ? `<b class="t-danger">${r.cnt.MISSING}</b>` : '0'}</td><td class="c">${r.cnt.REVISION + r.cnt.EXPIRED ? `<b class="t-warn">${r.cnt.REVISION + r.cnt.EXPIRED}</b>` : '0'}</td><td class="c">${r.cnt.REVIEW}</td><td class="c">${r.cnt.DONE}</td>
           <td class="tiny">${r.items.filter((i) => i.st !== 'DONE').map((i) => `<span class="badge ${WD.wf.SUB_STATUS[i.st].cls}">${esc(i.it.name)}</span>`).join(' ') || '<span class="t-ok">모두 완료</span>'}</td></tr>`; }).join('')}
       </tbody></table></div>` : ''}
-      <div class="person-lists">${rows.length ? '' : WD.ui.empty('등록된 실장·직원이 없습니다. [인사·계정 관리]에서 계정을 등록하면 필수 서류 현황이 집계됩니다.', 'users')}${rows.map((r) => `<div class="card person-card" id="pc-${r.x.id}">
+      <div class="person-lists">${rows.length ? '' : WD.ui.empty('등록된 실장·직원이 없습니다. [직원·계정 관리]에서 계정을 등록하면 필수 서류 현황이 집계됩니다.', 'users')}${rows.map((r) => `<div class="card person-card" id="pc-${r.x.id}">
         <div class="pc-head">${WD.ui.avatar(r.x, 34)}<div><b>${esc(r.x.name)}</b> <small class="muted">${esc(r.x.title)} · ${esc(r.x.dept)}</small><div><span class="tag">${esc(r.set.empType)} 세트</span></div></div><div class="pc-pct">${(r.items.length ? Math.round((r.cnt.DONE / r.items.length) * 100) : 100)}%</div></div>
         <ul class="chk-items">${r.items.map((i) => { const link = cellLink(r, i); const exp = i.sub?.expiresAt; return `<li class="ci-${i.st.toLowerCase()}">
           <span class="ci-ico">${i.st === 'DONE' ? I('check') : i.st === 'MISSING' ? '' : I('alert', 'xs')}</span>
           <span class="ci-name">${link ? `<a href="${link}">${esc(i.it.name)}</a>` : esc(i.it.name)}${exp ? ` <small class="muted">~${exp}</small> ${WD.wf.bucket(WD.daysLeft(exp)) ? WD.ui.dday(WD.daysLeft(exp)) : ''}` : ''}${i.it.source === 'contract' ? ' <small class="muted">(계약서 관리 연동)</small>' : ''}</span>
           ${WD.ui.subStatus(i.st)}
-          ${!isCEO && i.it.source !== 'contract' && ['MISSING', 'REVISION', 'EXPIRED'].includes(i.st) ? `<button class="btn sm primary" data-submit="${i.it.code}">${i.st === 'MISSING' ? '제출' : '다시 제출'}</button>` : ''}
+          ${r.x.id === u.id && i.it.source !== 'contract' && ['MISSING', 'REVISION', 'EXPIRED'].includes(i.st) ? `<button class="btn sm primary" data-submit="${i.it.code}">${i.st === 'MISSING' ? '제출' : '다시 제출'}</button>` : ''}
           ${isCEO && i.st === 'REVIEW' && i.doc ? `<a class="btn sm ghost" href="#/doc/${i.doc.id}">검토</a>` : ''}
         </li>`; }).join('')}</ul></div>`).join('')}</div>
     </div>`;

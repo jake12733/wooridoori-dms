@@ -833,3 +833,8 @@ body.preview-on .topbar { background: #fffaf0; }
 .pk-item input { accent-color: var(--g7); width: 17px; height: 17px; }
 .pk-item span { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; } .pk-item small { color: var(--muted); }
 @media (max-width: 900px) { .chat-side { max-height: 300px; border-right: 0; border-bottom: 1px solid var(--line); } }
+
+/* v10 — 사이드바 서브 메뉴 */
+.nav-item.nav-sub { margin-left: 22px; padding: 8px 10px; font-size: 14px; position: relative; color: #b9d0c6; }
+.nav-item.nav-sub::before { content: ''; position: absolute; left: -10px; top: 0; bottom: 50%; width: 9px; border-left: 1px solid rgba(255,255,255,.22); border-bottom: 1px solid rgba(255,255,255,.22); border-bottom-left-radius: 6px; }
+.nav-item.nav-sub .ic { width: 16px; height: 16px; }

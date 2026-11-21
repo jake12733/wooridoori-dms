@@ -250,11 +250,13 @@
 
   V.contracts = (el, p, q, u) => {
     const db = WD.db; const isCEO = WD.isTop(u);
+    const crumbHTML = '<div class="crumb"><a href="#/checklist">필수 서류</a> / 근로·위촉계약서</div>';
     const list = db.contracts.filter((c) => isCEO || c.userId === u.id).sort((a, b) => (a.end > b.end ? 1 : -1));
     const alerts = WD.wf.expiryAlerts(isCEO ? null : u.id);
     const buckets = ['D-7', 'D-14', 'D-30'];
     el.innerHTML = `<div class="page">
-      <div class="page-head"><div><h1>계약서 관리</h1><p class="muted">근로계약서(정규직·직원)·위촉계약서(강사·프리랜서) 작성 → 서명 요청 → 캔버스 전자서명 → 대표 전자 직인 날인 → 완료 문서 잠금. 종료 D-30·D-14·D-7 자동 알림.</p></div>
+      ${crumbHTML}
+      <div class="page-head"><div><h1>근로·위촉계약서</h1><p class="muted">근로계약서(정규직·직원)·위촉계약서(강사·프리랜서) 작성 → 서명 요청 → 캔버스 전자서명 → 대표 전자 직인 날인 → 완료 문서 잠금. 종료 D-30·D-14·D-7 자동 알림.</p></div>
         ${isCEO ? `<div class="row gap-s"><button class="btn primary" data-new="근로">${I('plus')} 근로계약서</button><button class="btn ghost" data-new="위촉">${I('plus')} 위촉계약서</button></div>` : ''}</div>
       <div class="alert-board">${buckets.map((b) => { const xs = alerts.filter((a) => a.bucket === b); return `<div class="ab-col ab-${b.replace('-', '').toLowerCase()}"><div class="ab-head"><b>${b}</b><small>${b === 'D-7' ? '7일 이내' : b === 'D-14' ? '8~14일' : '15~30일'}</small><em>${xs.length}</em></div>
         ${xs.map((a) => `<div class="ab-item"><div><span class="tag">${a.kind}</span> <a href="${a.link}"><b>${esc(a.title)}</b></a><small>만료일 ${a.end} · D-${a.days}</small></div>${a.kind === '계약 종료' && isCEO ? (a.renewed ? '<span class="tag ok">갱신 초안 있음</span>' : `<button class="btn sm primary" data-renew="${a.refId}">갱신 초안</button>`) : ''}</div>`).join('') || '<p class="muted tiny">없음</p>'}</div>`; }).join('')}</div>
@@ -368,6 +370,7 @@
     const st = WD.api.attendance.stats(month);
     const pendingAll = st.people.flatMap((pp) => pp.records.filter((r) => !r.approved));
     el.innerHTML = `<div class="page">
+      <div class="crumb"><a href="#/people">직원·계정 관리</a> / 출결·근태</div>
       <div class="page-head simple"><div><h1>출결·근태 관리</h1><p class="muted">직원이 버튼으로 체크한 근태를 한눈에 보고 수정·승인합니다.</p></div>
         <div class="seg"><a href="#/attendance?m=${prev}">‹</a><span class="seg-label">${Y}년 ${M}월</span><a href="#/attendance?m=${next}">›</a></div></div>
       <div class="kpis att-kpis">
@@ -527,7 +530,7 @@
     const liveSessions = (uid) => db.sessions.filter((s) => s.userId === uid && !s.revokedAt && new Date(s.expiresAt) > new Date()).length;
     el.innerHTML = `<div class="page">
       <div class="page-head"><div><h1>직원 · 계정 관리</h1><p class="muted">관리자·실장·직원 계정을 발급하면 로그인할 때 직급에 맞는 화면이 자동으로 나옵니다. 계정 비활성화(퇴사 처리) 시 해당 계정의 <b>모든 세션이 즉시 만료</b>되어 열려 있는 화면이 강제 로그아웃되고, 재로그인이 차단됩니다.</p></div>
-        <button class="btn primary" data-add>${I('plus')} 계정 등록</button></div>
+        <div class="row gap-s"><a class="btn ghost" href="#/attendance">${I('clock')} 출결·근태</a><button class="btn primary" data-add>${I('plus')} 계정 등록</button></div></div>
       <div class="card flush"><div class="sub-head">${I('users')} 활성 계정 ${active.length}명</div><table class="tbl"><thead><tr><th>이름</th><th>이메일</th><th>권한</th><th>고용 유형</th><th>부서·직함</th><th class="c">활성 세션</th><th class="c">미결 문서</th><th class="r">작업</th></tr></thead><tbody>
       ${active.map((x) => { const pd = pendingFor(x.id); return `<tr><td><div class="row gap-s center">${WD.ui.avatar(x, 28)}<b>${esc(x.name)}</b></div></td><td class="muted">${esc(x.email || x.loginId)}</td><td>${WD.roleBadge(x.role)}</td><td>${esc(x.empType)}</td><td>${esc(x.dept)} · ${esc(x.title || '')}</td><td class="c">${liveSessions(x.id) ? `<span class="live-dot"></span>${liveSessions(x.id)}` : '0'}</td><td class="c">${pd.docs.length || '-'}</td>
         <td class="r nowrap">${(x.id !== u.id && !WD.fixedRole(x.email)) ? `<button class="btn sm ghost" data-edit="${x.id}">수정</button> <button class="btn sm ghost" data-pw="${x.id}">비밀번호 재설정</button> <button class="btn sm ghost" data-kick="${x.id}" title="모든 세션 강제 종료">세션 종료</button> <button class="btn sm danger" data-resign="${x.id}">비활성화(퇴사)</button>` : x.id === u.id ? `<button class="btn sm ghost" data-pw="${x.id}">비밀번호 변경</button>` : '<span class="muted tiny">대표만 변경</span>'}</td></tr>`; }).join('')}
