@@ -113,11 +113,9 @@
     async toPdfBlob(title, html) {
       await WD.ui.loadScript(L().html2pdf);
       const node = this.printable(title, html);
-      node.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff';
-      document.body.appendChild(node);
-      try {
-        return await window.html2pdf().set({ margin: [10, 10, 12, 10], image: { type: 'jpeg', quality: 0.95 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }, pagebreak: { mode: ['css', 'legacy'] } }).from(node).outputPdf('blob');
-      } finally { node.remove(); }
+      // DOM에 붙이지 않은 노드를 넘기면 html2pdf가 자체 오버레이에 복제해 렌더링 (화면 밖 배치 시 빈 PDF 방지)
+      node.style.width = '794px'; node.style.background = '#fff';
+      return window.html2pdf().set({ margin: [10, 10, 12, 10], image: { type: 'jpeg', quality: 0.95 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }, pagebreak: { mode: ['css', 'legacy'] } }).from(node).outputPdf('blob');
     },
     toWordBlob(title, html) {
       const doc = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>${WD.esc(title)}</title><style>body{font-family:'맑은 고딕',sans-serif;font-size:11pt}table{border-collapse:collapse}td,th{border:1px solid #999;padding:4px 8px}.ql-align-center{text-align:center}.ql-align-right{text-align:right}</style></head><body>${html}</body></html>`;
