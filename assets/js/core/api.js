@@ -81,32 +81,57 @@
         WD.tx((db) => { const r = db.attendance.find((a) => a.id === id); db.attendance = db.attendance.filter((a) => a.id !== id); WD.audit('ATTEND_EDIT', { type: 'attendance', id, name: WD.userName(r?.userId) }, `${r?.date} ${r?.status} 기록 삭제`); });
       },
     },
-    /* ---------- 메시지 (알림함 소통 창구) — 본인이 보내거나 받은 대화만 반환 ---------- */
+    /* ---------- 메시지 (알림함 소통 창구) — 전체방 · 사용자 지정 방 · 1:1 개인 메시지 ----------
+     * to: 'ALL' | 'room:<id>' | <userId>
+     * 본인이 보내거나 받은 1:1, 본인이 멤버인 방, 전체방만 반환 (대표·관리자도 남의 1:1·방은 못 봄) */
     messages: {
-      _mine(u) { return (WD.db.messages || []).filter((m) => m.from === u.id || m.to === u.id || m.to === 'ALL'); },
-      unreadCount() { const u = WD.auth.currentRaw(); if (!u) return 0; return (WD.db.messages || []).filter((m) => m.from !== u.id && (m.to === u.id || m.to === 'ALL') && !(m.readBy || []).includes(u.id)).length; },
+      _rooms(u) { return (WD.db.rooms || []).filter((r) => !r.deleted && (r.members || []).includes(u.id)); },
+      _visible(u, m) {
+        if (m.to === 'ALL') return true;
+        if (String(m.to).startsWith('room:')) { const r = (WD.db.rooms || []).find((x) => 'room:' + x.id === m.to); return !!r && !r.deleted && r.members.includes(u.id); }
+        return m.from === u.id || m.to === u.id;
+      },
+      _mine(u) { return (WD.db.messages || []).filter((m) => this._visible(u, m)); },
+      _inConv(u, m, id) {
+        if (id === 'ALL') return m.to === 'ALL';
+        if (String(id).startsWith('room:')) return m.to === id;
+        return m.to !== 'ALL' && !String(m.to).startsWith('room:') && ((m.from === u.id && m.to === id) || (m.from === id && m.to === u.id));
+      },
+      unreadCount() {
+        const u = WD.auth.currentRaw(); if (!u || !WD.db) return 0;
+        return (WD.db.messages || []).filter((m) => m.from !== u.id && !(m.readBy || []).includes(u.id) && this._visible(u, m)).length;
+      },
       conversations() {
         const u = me(); const mine = this._mine(u);
-        const peers = WD.db.users.filter((x) => x.id !== u.id && (x.status === 'ACTIVE' || mine.some((m) => m.from === x.id || m.to === x.id)));
-        const conv = (id) => { const ms = mine.filter((m) => (id === 'ALL' ? m.to === 'ALL' : m.to !== 'ALL' && (m.from === id || m.to === id))); const last = ms[ms.length - 1]; return { id, last, unread: ms.filter((m) => m.from !== u.id && !(m.readBy || []).includes(u.id)).length }; };
-        const list = [{ ...conv('ALL'), name: '전체 공지방', role: null, all: true }, ...peers.map((p) => ({ ...conv(p.id), name: p.name, role: WD.effectiveRole(p), inactive: p.status !== 'ACTIVE' }))];
-        return list.sort((a, b) => (a.all ? -1 : b.all ? 1 : ((b.last?.at || '') > (a.last?.at || '') ? 1 : (b.last?.at || '') < (a.last?.at || '') ? -1 : a.name.localeCompare(b.name))));
+        const conv = (id) => { const ms = mine.filter((m) => this._inConv(u, m, id)); const last = ms[ms.length - 1]; return { id, last, unread: ms.filter((m) => m.from !== u.id && !(m.readBy || []).includes(u.id)).length }; };
+        const rooms = this._rooms(u).map((r) => ({ ...conv('room:' + r.id), name: r.name, room: r, kind: 'room' }));
+        const peers = WD.db.users.filter((x) => x.id !== u.id && mine.some((m) => this._inConv(u, m, x.id)))
+          .map((p) => ({ ...conv(p.id), name: p.name, role: WD.effectiveRole(p), inactive: p.status !== 'ACTIVE', kind: 'dm' }));
+        const byRecent = (a, b) => ((b.last?.at || b.room?.createdAt || '') > (a.last?.at || a.room?.createdAt || '') ? 1 : -1);
+        return [{ ...conv('ALL'), name: '전체 공지방', kind: 'all', all: true }, ...[...rooms, ...peers].sort(byRecent)];
       },
-      thread(peer) {
+      /** 1:1 개인 메시지 대상(등록된 활성 계정) */
+      people() { const u = me(); return WD.db.users.filter((x) => x.id !== u.id && x.status === 'ACTIVE').map((x) => ({ id: x.id, name: x.name, role: WD.effectiveRole(x), dept: x.dept })); },
+      peerInfo(id) {
         const u = me();
-        return clone(this._mine(u).filter((m) => (peer === 'ALL' ? m.to === 'ALL' : m.to !== 'ALL' && ((m.from === u.id && m.to === peer) || (m.from === peer && m.to === u.id)))));
+        if (id === 'ALL') return { id, kind: 'all', name: '전체 공지방' };
+        if (String(id).startsWith('room:')) { const r = this._rooms(u).find((x) => 'room:' + x.id === id); return r ? { id, kind: 'room', name: r.name, room: r } : null; }
+        const p = WD.user(id); return p ? { id, kind: 'dm', name: p.name, role: WD.effectiveRole(p), inactive: p.status !== 'ACTIVE' } : null;
       },
+      thread(peer) { const u = me(); return clone(this._mine(u).filter((m) => this._inConv(u, m, peer))); },
       send(peer, text, docId = null) {
         WD.blockPreview();
         const u = me(); text = String(text || '').trim();
         if (!text && !docId) throw new Error('메시지를 입력하세요.');
-        if (peer !== 'ALL') { const p = WD.user(peer); if (!p || p.status !== 'ACTIVE') throw new Error('비활성화된 계정에는 보낼 수 없습니다.'); }
+        if (String(peer).startsWith('room:')) { if (!this._rooms(u).some((r) => 'room:' + r.id === peer)) throw new Error('이 방의 멤버가 아닙니다.'); }
+        else if (peer !== 'ALL') { const p = WD.user(peer); if (!p || p.status !== 'ACTIVE') throw new Error('비활성화된 계정에는 보낼 수 없습니다.'); }
+        const label = this.peerInfo(peer)?.name || '';
         return WD.tx((db) => {
           db.messages = db.messages || [];
           const m = { id: WD.uid('msg'), from: u.id, to: peer, text: text.slice(0, 2000), docId, at: WD.now(), readBy: [u.id] };
           db.messages.push(m);
           if (db.messages.length > 5000) db.messages.splice(0, db.messages.length - 5000);
-          WD.audit('DISPATCH', { type: 'message', id: m.id, name: peer === 'ALL' ? '전체 공지방' : WD.userName(peer) }, `메시지 ${text.slice(0, 40)}${docId ? ' · 문서 첨부' : ''}`);
+          WD.audit('DISPATCH', { type: 'message', id: m.id, name: label }, `메시지 ${text.slice(0, 40)}${docId ? ' · 문서 첨부' : ''}`);
           return clone(m);
         });
       },
@@ -114,6 +139,48 @@
         const u = WD.auth.currentRaw(); if (!u || u.preview) return;
         const ids = this.thread(peer).filter((m) => m.from !== u.id && !(m.readBy || []).includes(u.id)).map((m) => m.id);
         if (ids.length) WD.tx((db) => db.messages.forEach((m) => { if (ids.includes(m.id)) m.readBy = [...(m.readBy || []), u.id]; }));
+      },
+      /* ---- 방 만들기 · 관리 ---- */
+      createRoom(name, memberIds) {
+        WD.blockPreview();
+        const u = me(); name = String(name || '').trim();
+        const members = [...new Set([u.id, ...memberIds])].filter((id) => WD.user(id)?.status === 'ACTIVE');
+        if (!name) throw new Error('방 이름을 입력하세요.');
+        if (members.length < 2) throw new Error('함께할 멤버를 1명 이상 선택하세요.');
+        return WD.tx((db) => {
+          db.rooms = db.rooms || [];
+          const r = { id: WD.uid('room'), name: name.slice(0, 40), members, ownerId: u.id, createdAt: WD.now() };
+          db.rooms.push(r);
+          db.messages = db.messages || [];
+          db.messages.push({ id: WD.uid('msg'), from: u.id, to: 'room:' + r.id, text: `'${r.name}' 방을 만들었습니다. (${members.map((id) => WD.userName(id)).join(', ')})`, system: true, at: WD.now(), readBy: [u.id] });
+          WD.audit('DISPATCH', { type: 'room', id: r.id, name: r.name }, `방 생성 · 멤버 ${members.length}명`);
+          return clone(r);
+        });
+      },
+      canManageRoom(r) { const u = me(); return r.ownerId === u.id || WD.isTop({ role: u.realRole || u.role }); },
+      updateRoom(roomId, { name, members }) {
+        WD.blockPreview();
+        const u = me();
+        return WD.tx((db) => {
+          const r = (db.rooms || []).find((x) => x.id === roomId); if (!r || r.deleted) throw new Error('방이 없습니다.');
+          if (!(r.ownerId === u.id || WD.isTop({ role: u.realRole || u.role }))) throw new Error('방을 만든 사람 또는 대표·관리자만 수정할 수 있습니다.');
+          const before = r.members.slice();
+          if (name) r.name = String(name).trim().slice(0, 40);
+          if (members) r.members = [...new Set([r.ownerId, ...members])].filter((id) => WD.user(id)?.status === 'ACTIVE' || id === r.ownerId);
+          const added = r.members.filter((x) => !before.includes(x)), removed = before.filter((x) => !r.members.includes(x));
+          if (added.length || removed.length) db.messages.push({ id: WD.uid('msg'), from: u.id, to: 'room:' + r.id, system: true, text: [added.length ? `${added.map((x) => WD.userName(x)).join(', ')}님 초대` : '', removed.length ? `${removed.map((x) => WD.userName(x)).join(', ')}님 내보냄` : ''].filter(Boolean).join(' · '), at: WD.now(), readBy: [u.id] });
+          WD.audit('DISPATCH', { type: 'room', id: r.id, name: r.name }, `방 수정 · 멤버 ${r.members.length}명`);
+        });
+      },
+      leaveRoom(roomId) {
+        WD.blockPreview();
+        const u = me();
+        WD.tx((db) => {
+          const r = (db.rooms || []).find((x) => x.id === roomId); if (!r) return;
+          if (r.ownerId === u.id) { r.deleted = true; WD.audit('DISPATCH', { type: 'room', id: r.id, name: r.name }, '방 삭제'); return; }
+          r.members = r.members.filter((x) => x !== u.id);
+          db.messages.push({ id: WD.uid('msg'), from: u.id, to: 'room:' + r.id, system: true, text: `${u.name}님이 나갔습니다.`, at: WD.now(), readBy: [u.id] });
+        });
       },
     },
     documents: {

@@ -7,39 +7,87 @@
   const I = (n, c) => WD.icon(n, c);
   const esc = WD.esc;
 
-  /* ---------------- 알림함 · 메시지 (직원들과 소통 창구) ---------------- */
+  /* ---------------- 알림함 · 메시지 (전체방 · 내가 만든 방 · 1:1 개인 메시지) ---------------- */
+  const roomAvatar = (c, size = 36) => (c.kind === 'all'
+    ? `<span class="avatar all-room" style="width:${size}px;height:${size}px">${WD.icon('megaphone')}</span>`
+    : c.kind === 'room' ? `<span class="avatar room-av" style="width:${size}px;height:${size}px">${WD.icon('users')}</span>`
+    : WD.ui.avatar(WD.user(c.id), size));
+
+  function peoplePicker({ title, okText, multi, withName, base = null, exclude = [] }) {
+    return new Promise((resolve) => {
+      const people = WD.api.messages.people().filter((p) => !exclude.includes(p.id));
+      const sel = new Set(base?.members || []);
+      const groups = [['top', '대표·관리자', (x) => WD.isTop(x)], ['manager', '실장', (x) => x.role === 'manager'], ['staff', '직원', (x) => x.role === 'staff']];
+      const m = WD.ui.modal({ title, okText, size: 'md',
+        body: `${withName ? `<label class="fld"><span>방 이름</span><input data-room-name value="${esc(base?.name || '')}" placeholder="예) 방과후팀, 12월 행사 준비"></label>` : ''}
+          <div class="fld"><span>${multi ? '함께할 사람 (여러 명 선택)' : '메시지를 보낼 사람'}</span>
+          <div class="pk-search">${WD.icon('search')}<input data-pk-q placeholder="이름으로 찾기"></div>
+          ${multi ? `<div class="tg-roles">${groups.map(([k, l, fn]) => `<button type="button" class="chip" data-pk-role="${k}" ${people.some(fn) ? '' : 'disabled'}>${l} 전체</button>`).join('')}</div>` : ''}
+          <div class="pk-list">${people.map((p) => `<label class="pk-item" data-pk-name="${esc(p.name.toLowerCase())}"><input type="${multi ? 'checkbox' : 'radio'}" name="pk" value="${p.id}" ${sel.has(p.id) ? 'checked' : ''}>${WD.ui.avatar(p, 30)}<span><b>${esc(p.name)}</b> ${WD.roleBadge(p.role)}<small>${esc(p.dept || '')}</small></span></label>`).join('') || '<p class="muted pad">등록된 다른 직원 계정이 없습니다. [직원·계정 관리]에서 먼저 등록하세요.</p>'}</div></div>`,
+        onOk: (w) => {
+          const ids = [...w.querySelectorAll('input[name=pk]:checked')].map((c) => c.value);
+          if (!ids.length) throw new Error(multi ? '멤버를 1명 이상 선택하세요.' : '보낼 사람을 선택하세요.');
+          const name = w.querySelector('[data-room-name]')?.value.trim();
+          if (withName && !name) throw new Error('방 이름을 입력하세요.');
+          resolve({ ids, name });
+        } });
+      m.el.querySelectorAll('[data-x]').forEach((b) => b.addEventListener('click', () => resolve(null)));
+      m.el.querySelector('[data-pk-q]').addEventListener('input', (e) => { const v = e.target.value.trim().toLowerCase(); m.el.querySelectorAll('.pk-item').forEach((it) => { it.style.display = !v || it.dataset.pkName.includes(v) ? '' : 'none'; }); });
+      m.el.querySelectorAll('[data-pk-role]').forEach((b) => b.addEventListener('click', () => { const fn = groups.find((g) => g[0] === b.dataset.pkRole)[2]; const ids = people.filter(fn).map((p) => p.id); const boxes = [...m.el.querySelectorAll('input[name=pk]')].filter((c) => ids.includes(c.value)); const all = boxes.every((c) => c.checked); boxes.forEach((c) => (c.checked = !all)); }));
+      if (!multi) m.el.querySelectorAll('.pk-item input').forEach((r) => r.addEventListener('dblclick', () => m.el.querySelector('[data-ok]').click()));
+    });
+  }
+
   function renderMessages(el, query, u, tabsHTML) {
-    let convs = WD.api.messages.conversations();
-    const peer = query.with || (convs.find((c) => c.unread)?.id) || 'ALL';
-    WD.api.messages.markRead(peer); // 열자마자 읽음 처리 후 목록 계산
-    convs = WD.api.messages.conversations();
-    const cur = convs.find((c) => c.id === peer) || convs[0];
-    const listHTML = (cs) => cs.map((c) => `<a class="conv ${c.id === cur.id ? 'active' : ''} ${c.inactive ? 'inactive' : ''}" href="#/inbox?tab=msg&with=${c.id}">
-          ${c.all ? `<span class="avatar all-room">${WD.icon('megaphone')}</span>` : WD.ui.avatar(WD.user(c.id), 36)}
-          <span class="conv-body"><span class="conv-top"><b>${esc(c.name)}</b>${c.role ? WD.roleBadge(c.role) : ''}${c.inactive ? '<small class="muted">비활성</small>' : ''}<time>${c.last ? fmtT(c.last.at) : ''}</time></span>
-          <small>${c.last ? esc((c.last.from === u.id ? '나: ' : '') + (c.last.text || '📎 문서')) : '대화 없음'}</small></span>
-          ${c.unread ? `<em class="conv-unread">${c.unread}</em>` : ''}</a>`).join('');
+    const api = WD.api.messages;
+    let convs = api.conversations();
+    let peer = query.with || (convs.find((c) => c.unread)?.id) || 'ALL';
+    let cur = api.peerInfo(peer);
+    if (!cur) { peer = 'ALL'; cur = api.peerInfo('ALL'); }
+    api.markRead(peer); // 열자마자 읽음 처리 후 목록 계산
+    convs = api.conversations();
     const docs = WD.api.documents.visible().slice().sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)).slice(0, 50);
-    const fmtT = (iso) => { const d = new Date(iso); const today = WD.ymd() === WD.ymd(d); return today ? `${WD.pad(d.getHours())}:${WD.pad(d.getMinutes())}` : `${d.getMonth() + 1}/${d.getDate()}`; };
+    const fmtT = (iso) => { if (!iso) return ''; const d = new Date(iso); return WD.ymd() === WD.ymd(d) ? `${WD.pad(d.getHours())}:${WD.pad(d.getMinutes())}` : `${d.getMonth() + 1}/${d.getDate()}`; };
+    const tagOf = (c) => (c.kind === 'room' ? `<small class="room-count">${c.room.members.length}명</small>` : c.role ? WD.roleBadge(c.role) : '');
+    const listHTML = (cs) => cs.map((c) => `<a class="conv ${c.id === peer ? 'active' : ''} ${c.inactive ? 'inactive' : ''}" href="#/inbox?tab=msg&with=${encodeURIComponent(c.id)}">
+        ${roomAvatar(c)}
+        <span class="conv-body"><span class="conv-top"><b>${esc(c.name)}</b>${tagOf(c)}${c.inactive ? '<small class="muted">비활성</small>' : ''}<time>${fmtT(c.last?.at)}</time></span>
+        <small>${c.last ? esc((c.last.from === u.id && !c.last.system ? '나: ' : '') + (c.last.text || '📎 문서')) : (c.kind === 'room' ? '새 방' : '대화 없음')}</small></span>
+        ${c.unread ? `<em class="conv-unread">${c.unread}</em>` : ''}</a>`).join('');
     const bubble = (m) => {
+      if (m.system) return `<div class="msg-system">${esc(m.text)} · ${fmtT(m.at)}</div>`;
       const mine = m.from === u.id; const s = WD.user(m.from);
       const doc = m.docId ? WD.doc(m.docId) : null;
       const d = new Date(m.at);
+      let read = '';
+      if (mine && cur.kind === 'dm') read = (m.readBy || []).includes(peer) ? '읽음' : '안 읽음';
+      if (mine && cur.kind === 'room') { const n = cur.room.members.filter((id) => id !== u.id && !(m.readBy || []).includes(id)).length; read = n ? `${n}명 안 읽음` : '모두 읽음'; }
       return `<div class="msg ${mine ? 'mine' : ''}">
         ${mine ? '' : WD.ui.avatar(s || { id: m.from, name: '?' }, 30)}
         <div class="msg-col">${mine ? '' : `<div class="msg-from"><b>${esc(s?.name || '(삭제된 사용자)')}</b>${s ? WD.roleBadge(WD.effectiveRole(s)) : ''}</div>`}
           <div class="msg-bubble">${esc(m.text).replace(/\n/g, '<br>')}${m.docId ? `<a class="msg-doc" href="#/doc/${m.docId}">${doc ? WD.ui.kindIcon(doc.kind) : WD.icon('file')}<span>${esc(doc?.title || '(열람할 수 없는 문서)')}</span></a>` : ''}</div>
-          <time>${WD.ymd(d).slice(5).replace('-', '/')} ${WD.pad(d.getHours())}:${WD.pad(d.getMinutes())}${mine && peer !== 'ALL' ? ` · ${(m.readBy || []).includes(peer) ? '읽음' : '안 읽음'}` : ''}</time></div></div>`;
+          <time>${WD.ymd(d).slice(5).replace('-', '/')} ${WD.pad(d.getHours())}:${WD.pad(d.getMinutes())}${read ? ` · ${read}` : ''}</time></div></div>`;
     };
-    const threadHTML = () => { const th = WD.api.messages.thread(cur.id); return th.length ? th.map(bubble).join('') : `<div class="msg-empty">${WD.icon('send')}<p>${cur.all ? '전체 직원에게 보내는 공지방입니다. 첫 메시지를 남겨 보세요.' : `${esc(cur.name)}님과의 대화를 시작해 보세요.`}</p></div>`; };
+    const threadHTML = () => { const th = api.thread(peer); return th.length ? th.map(bubble).join('') : `<div class="msg-empty">${WD.icon('send')}<p>${cur.kind === 'all' ? '전체 직원에게 보내는 공지방입니다. 첫 메시지를 남겨 보세요.' : `${esc(cur.name)}${cur.kind === 'room' ? ' 방에서' : '님과'} 대화를 시작해 보세요.`}</p></div>`; };
+    const headHTML = () => {
+      if (cur.kind === 'all') return `${roomAvatar(cur, 32)}<b>전체 공지방</b><small class="muted">활성 직원 전체가 함께 보는 방</small>`;
+      if (cur.kind === 'room') {
+        const r = cur.room; const can = api.canManageRoom(r);
+        return `${roomAvatar(cur, 32)}<div class="ch-title"><b>${esc(r.name)}</b><small class="muted">${r.members.map((id) => esc(WD.userName(id))).join(', ')}</small></div>
+          <div class="ch-act">${can ? `<button class="btn sm ghost" data-room-edit>${WD.icon('users')} 멤버·이름 관리</button>` : ''}<button class="btn sm ghost" data-room-leave>${r.ownerId === u.id ? '방 삭제' : '나가기'}</button></div>`;
+      }
+      return `${roomAvatar(cur, 32)}<b>${esc(cur.name)}</b>${cur.role ? WD.roleBadge(cur.role) : ''}<small class="muted">1:1 개인 메시지</small>`;
+    };
     el.innerHTML = `<div class="page">
-      <div class="page-head simple"><div><h1>알림함</h1><p class="muted">직원들과 메시지로 바로 소통하고, 문서를 함께 보낼 수 있어요.</p></div></div>
+      <div class="page-head simple"><div><h1>알림함</h1><p class="muted">전체 공지방, 직접 만든 방, 1:1 개인 메시지로 직원들과 소통하세요. 문서도 함께 보낼 수 있어요.</p></div></div>
       ${tabsHTML}
       <div class="chat card flush">
-        <aside class="chat-list" id="chat-list">${listHTML(convs)}</aside>
-        
+        <aside class="chat-side">
+          <div class="chat-new"><button class="btn sm primary" data-new-room>${WD.icon('plus')} 방 만들기</button><button class="btn sm ghost" data-new-dm>${WD.icon('send')} 개인 메시지</button></div>
+          <div class="chat-list" id="chat-list">${listHTML(convs)}</div>
+        </aside>
         <section class="chat-main">
-          <div class="chat-head">${cur.all ? `<span class="avatar all-room">${WD.icon('megaphone')}</span><b>전체 공지방</b><small class="muted">활성 직원 전체가 함께 보는 방</small>` : `${WD.ui.avatar(WD.user(cur.id), 32)}<b>${esc(cur.name)}</b>${cur.role ? WD.roleBadge(cur.role) : ''}`}</div>
+          <div class="chat-head" id="chat-head">${headHTML()}</div>
           <div class="chat-thread" id="chat-thread">${threadHTML()}</div>
           ${cur.inactive ? '<div class="chat-input"><p class="muted">비활성화된 계정이라 메시지를 보낼 수 없습니다.</p></div>' : `<form class="chat-input" id="chat-form">
             <select id="chat-doc" title="문서 함께 보내기"><option value="">📎 문서 첨부 안 함</option>${docs.map((d) => `<option value="${d.id}">${esc(d.title)}</option>`).join('')}</select>
@@ -50,28 +98,51 @@
     const thread = el.querySelector('#chat-thread');
     const scrollEnd = () => { thread.scrollTop = thread.scrollHeight; };
     scrollEnd();
-    WD.api.messages.markRead(cur.id);
+    // 방 만들기 / 개인 메시지
+    el.querySelector('[data-new-room]').addEventListener('click', async () => {
+      const r = await peoplePicker({ title: '새 방 만들기', okText: '방 만들기', multi: true, withName: true });
+      if (!r) return;
+      try { const room = api.createRoom(r.name, r.ids); WD.ui.toast(`'${room.name}' 방을 만들었습니다.`); WD.app.go(`#/inbox?tab=msg&with=${encodeURIComponent('room:' + room.id)}`); } catch (e) { WD.ui.toast(e.message, 'warn'); }
+    });
+    el.querySelector('[data-new-dm]').addEventListener('click', async () => {
+      const r = await peoplePicker({ title: '개인 메시지 보내기', okText: '대화 열기', multi: false });
+      if (r) WD.app.go(`#/inbox?tab=msg&with=${encodeURIComponent(r.ids[0])}`);
+    });
+    el.querySelector('[data-room-edit]')?.addEventListener('click', async () => {
+      const room = cur.room;
+      const r = await peoplePicker({ title: '방 멤버·이름 관리', okText: '저장', multi: true, withName: true, base: { name: room.name, members: room.members }, exclude: [room.ownerId] });
+      if (!r) return;
+      try { api.updateRoom(room.id, { name: r.name, members: r.ids }); WD.ui.toast('방 정보를 저장했습니다.'); WD.app.refresh(); } catch (e) { WD.ui.toast(e.message, 'warn'); }
+    });
+    el.querySelector('[data-room-leave]')?.addEventListener('click', async () => {
+      const own = cur.room.ownerId === u.id;
+      if (!(await WD.ui.confirm(own ? '방 삭제' : '방 나가기', own ? `'${cur.room.name}' 방을 삭제할까요? 멤버 모두에게서 사라집니다.` : `'${cur.room.name}' 방에서 나갈까요?`, { danger: true }))) return;
+      try { api.leaveRoom(cur.room.id); WD.app.go('#/inbox?tab=msg&with=ALL'); } catch (e) { WD.ui.toast(e.message, 'warn'); }
+    });
+    // 보내기
     const form = el.querySelector('#chat-form');
     if (form) {
       const ta = el.querySelector('#chat-text');
       const send = () => {
-        try { WD.api.messages.send(cur.id, ta.value, el.querySelector('#chat-doc').value || null); ta.value = ''; el.querySelector('#chat-doc').value = ''; thread.innerHTML = threadHTML(); scrollEnd(); }
+        try { api.send(peer, ta.value, el.querySelector('#chat-doc').value || null); ta.value = ''; el.querySelector('#chat-doc').value = ''; thread.innerHTML = threadHTML(); scrollEnd(); }
         catch (e) { WD.ui.toast(e.message, 'warn'); }
       };
       form.addEventListener('submit', (e) => { e.preventDefault(); send(); });
       ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
       setTimeout(() => ta.focus(), 50);
     }
-    // 새 메시지 자동 반영 (같은 브라우저의 다른 탭·주기 확인)
-    let lastSig = JSON.stringify(WD.api.messages.thread(cur.id).map((m) => [m.id, (m.readBy || []).length]));
-    let lastList = '';
+    // 새 메시지·방 변경 자동 반영 (같은 브라우저의 다른 탭·주기 확인)
+    const sigOf = () => JSON.stringify(api.thread(peer).map((m) => [m.id, (m.readBy || []).length]));
+    let lastSig = sigOf(), lastList = '';
     const poll = () => {
       if (!thread.isConnected) return;
       WD.load();
-      const sig = JSON.stringify(WD.api.messages.thread(cur.id).map((m) => [m.id, (m.readBy || []).length]));
-      const cs = WD.api.messages.conversations(); const lsig = JSON.stringify(cs.map((c) => [c.id, c.unread, c.last?.id]));
+      if (cur.kind === 'room' && !api.peerInfo(peer)) { WD.ui.toast('방이 삭제되었거나 멤버에서 빠졌습니다.', 'warn'); WD.app.go('#/inbox?tab=msg&with=ALL'); return; }
+      if (cur.kind === 'room') cur = api.peerInfo(peer);
+      const cs = api.conversations(); const lsig = JSON.stringify(cs.map((c) => [c.id, c.unread, c.last?.id, c.name]));
       if (lsig !== lastList) { lastList = lsig; const L = el.querySelector('#chat-list'); if (L) L.innerHTML = listHTML(cs); }
-      if (sig !== lastSig) { lastSig = sig; const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80; thread.innerHTML = threadHTML(); if (atBottom) scrollEnd(); WD.api.messages.markRead(cur.id); }
+      const sig = sigOf();
+      if (sig !== lastSig) { lastSig = sig; const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80; thread.innerHTML = threadHTML(); if (atBottom) scrollEnd(); api.markRead(peer); }
     };
     const iv = setInterval(poll, 2500);
     const onStorage = (e) => { if (e.key === WD.DB_KEY) poll(); };
