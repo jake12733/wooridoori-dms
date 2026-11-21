@@ -9,7 +9,7 @@
 --   wd_api     : API 서버 접속 롤 (RLS 대상, BYPASSRLS 없음)
 --   wd_vault   : 보관 DB 전용 롤 (대표 세션 요청에서만 SET ROLE)
 --   wd_auditor : 감사 로그 SELECT 전용 (대표 조회 화면)
--- 요청마다 API가 `SET LOCAL app.user_id = '<uuid>'; SET LOCAL app.role = 'ADMIN|MANAGER|STAFF';`
+-- 요청마다 API가 `SET LOCAL app.user_id = '<uuid>'; SET LOCAL app.role = 'ceo|admin|manager|staff';`
 -- =============================================================================
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE SCHEMA IF NOT EXISTS app;
@@ -17,7 +17,7 @@ CREATE SCHEMA IF NOT EXISTS vault;
 CREATE SCHEMA IF NOT EXISTS audit;
 
 -- ---------- 열거형 ----------
-CREATE TYPE app.user_role     AS ENUM ('ADMIN', 'MANAGER', 'STAFF', 'RESIGNED');  -- 최고 관리자 / 실장 / 직원 / 비활성(퇴사)
+CREATE TYPE app.user_role     AS ENUM ('ceo', 'admin', 'manager', 'staff');  -- 대표 / 관리자 / 실장 / 직원 (퇴사는 status='RESIGNED')
 CREATE TYPE app.user_status   AS ENUM ('ACTIVE', 'RESIGNED', 'SUSPENDED');
 CREATE TYPE app.emp_type      AS ENUM ('정규직', '위촉강사', '계약직', '프리랜서');
 CREATE TYPE app.folder_access AS ENUM ('none', 'view', 'edit');
@@ -30,7 +30,7 @@ CREATE TYPE app.dispatch_action AS ENUM ('SUBMIT_CEO', 'REQUEST_USER', 'SAVE_FOL
 
 -- ---------- 헬퍼: 현재 요청 사용자 ----------
 CREATE OR REPLACE FUNCTION app.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT nullif(current_setting('app.user_id', true), '')::uuid $$;
-CREATE OR REPLACE FUNCTION app.is_ceo() RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT current_setting('app.role', true) = 'ADMIN' $$;
+CREATE OR REPLACE FUNCTION app.is_ceo() RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT current_setting('app.role', true) = 'ceo' $$;
 
 -- ---------- 사용자 / 세션 ----------
 CREATE TABLE app.users (
@@ -39,7 +39,7 @@ CREATE TABLE app.users (
   password_hash text NOT NULL,                        -- argon2id
   totp_secret   bytea,                                -- 2단계 인증 (pgp_sym_encrypt)
   name          text NOT NULL,
-  role          app.user_role NOT NULL DEFAULT 'STAFF',
+  role          app.user_role NOT NULL DEFAULT 'staff',
   status        app.user_status NOT NULL DEFAULT 'ACTIVE',
   emp_type      app.emp_type NOT NULL,
   dept          text NOT NULL,
@@ -50,7 +50,6 @@ CREATE TABLE app.users (
   resigned_at   timestamptz,
   resign_reason text,
   created_at    timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT resigned_consistency CHECK ((role = 'RESIGNED') = (status = 'RESIGNED'))
 );
 
 CREATE TABLE app.sessions (
@@ -238,7 +237,7 @@ FROM app.users u
 JOIN app.checklist_items ci ON ci.emp_type = u.emp_type AND ci.source IS NULL
 LEFT JOIN LATERAL (SELECT * FROM app.submissions s WHERE s.user_id = u.id AND s.item_code = ci.code ORDER BY created_at DESC LIMIT 1) s ON true
 LEFT JOIN app.documents d ON d.id = s.document_id
-WHERE u.status = 'ACTIVE' AND u.role = 'STAFF';
+WHERE u.status = 'ACTIVE' AND u.role = 'staff';
 
 -- ---------- 계약서 ----------
 CREATE TABLE app.contracts (
@@ -369,7 +368,7 @@ CREATE OR REPLACE FUNCTION app.doc_access(d app.documents) RETURNS app.folder_ac
     WHEN NOT app.active() THEN 'none'::app.folder_access
     WHEN app.is_ceo() THEN (CASE WHEN d.locked THEN 'view' ELSE 'edit' END)::app.folder_access
     WHEN d.owner_id = app.uid() OR d.assignee_id = app.uid() THEN (CASE WHEN d.locked THEN 'view' ELSE 'edit' END)::app.folder_access
-    WHEN current_setting('app.role', true) = 'MANAGER' AND (SELECT staff_access FROM app.folders f WHERE f.id = d.folder_id) <> 'none' THEN (CASE WHEN d.locked OR d.kind = 'hwp' THEN 'view' ELSE 'edit' END)::app.folder_access
+    WHEN current_setting('app.role', true) = 'manager' AND (SELECT staff_access FROM app.folders f WHERE f.id = d.folder_id) <> 'none' THEN (CASE WHEN d.locked OR d.kind = 'hwp' THEN 'view' ELSE 'edit' END)::app.folder_access
     ELSE greatest(
       coalesce((SELECT access FROM app.folder_grants g WHERE g.folder_id = d.folder_id AND g.user_id = app.uid()), (SELECT staff_access FROM app.folders f WHERE f.id = d.folder_id)),
       CASE WHEN EXISTS (SELECT 1 FROM app.document_recipients r WHERE r.document_id = d.id AND r.user_id = app.uid()) THEN 'view'::app.folder_access ELSE 'none'::app.folder_access END)
@@ -382,8 +381,11 @@ CREATE POLICY ver_select ON app.document_versions FOR SELECT USING (EXISTS (SELE
 CREATE POLICY ver_insert ON app.document_versions FOR INSERT WITH CHECK (author_id = app.uid() AND EXISTS (SELECT 1 FROM app.documents d WHERE d.id = document_id AND app.doc_access(d) = 'edit'));
 CREATE POLICY contract_select ON app.contracts FOR SELECT USING (app.active() AND (app.is_ceo() OR user_id = app.uid()));
 CREATE POLICY contract_ceo ON app.contracts FOR ALL USING (app.active() AND app.is_ceo());
+-- 근태: 대표 외 직급은 DB 조회 단계에서 본인 행만 반환 (타 직원 기록·누적 통계 차단), 본인 등록 후 수정·삭제 불가
 CREATE POLICY attend_select ON app.attendance FOR SELECT USING (app.active() AND (app.is_ceo() OR user_id = app.uid()));
-CREATE POLICY attend_self ON app.attendance FOR INSERT WITH CHECK (app.active() AND user_id = app.uid());
+CREATE POLICY attend_self ON app.attendance FOR INSERT WITH CHECK (app.active() AND user_id = app.uid() AND work_date = current_date);
+REVOKE UPDATE, DELETE ON app.attendance FROM wd_api;  -- 수정·삭제는 대표 전용 SECURITY DEFINER 함수로만
+CREATE VIEW app.v_attendance_monthly_secure WITH (security_barrier) AS SELECT * FROM app.v_attendance_monthly WHERE app.is_ceo();
 CREATE POLICY attend_ceo ON app.attendance FOR ALL USING (app.active() AND app.is_ceo());
 CREATE POLICY finance_ceo ON app.finance_entries FOR ALL USING (app.active() AND app.is_ceo());
 CREATE POLICY ntf_self ON app.notifications FOR ALL USING (user_id = app.uid());
@@ -430,7 +432,7 @@ BEGIN
   DELETE FROM app.documents d USING app.folders f WHERE f.id = d.folder_id AND d.owner_id = p_user
      AND (f.name = '인사기록·제출서류' OR (d.status = 'APPROVED' AND f.parent_id = (SELECT id FROM app.folders WHERE name = '회계' AND parent_id IS NULL)));
   INSERT INTO audit.logs (user_id, role, action, target_type, target_id, detail) VALUES
-    (app.uid(), 'ADMIN', 'RESIGN_CONFIRM', 'user', p_user::text, '퇴사일 ' || p_date || ' · ' || p_reason),
-    (app.uid(), 'ADMIN', 'SESSION_REVOKE', 'user', p_user::text, '활성 세션 ' || n_sessions || '개 즉시 만료'),
-    (app.uid(), 'ADMIN', 'VAULT_MOVE', 'user', p_user::text, '법정 보관 DB 이관');
+    (app.uid(), 'ceo', 'RESIGN_CONFIRM', 'user', p_user::text, '퇴사일 ' || p_date || ' · ' || p_reason),
+    (app.uid(), 'ceo', 'SESSION_REVOKE', 'user', p_user::text, '활성 세션 ' || n_sessions || '개 즉시 만료'),
+    (app.uid(), 'ceo', 'VAULT_MOVE', 'user', p_user::text, '법정 보관 DB 이관');
 END $$;

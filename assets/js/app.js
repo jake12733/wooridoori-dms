@@ -167,6 +167,7 @@
   };
 
   V.login = (root) => {
+    document.getElementById('modal-root').innerHTML = ''; // 이전 사용자의 대화상자 제거
     const reason = sessionStorage.getItem('wd_logout_reason') || '';
     sessionStorage.removeItem('wd_logout_reason');
     const danger = /퇴사|회수|차단|비활성|만료/.test(reason) && !/^로그아웃/.test(reason);
