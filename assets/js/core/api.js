@@ -9,7 +9,7 @@
 (function () {
   const WD = window.WD;
   const me = () => { const u = WD.auth.current(); if (!u) throw new Error('로그인이 필요합니다.'); return u; };
-  const deny = (what) => { WD.auditTx('ACCESS_DENIED', { type: 'api', name: what }, `대표 전용 데이터 조회 시도 차단`); throw new Error('대표만 조회할 수 있는 데이터입니다.'); };
+  const deny = (what) => { WD.auditTx('ACCESS_DENIED', { type: 'api', name: what }, `대표 전용 데이터 조회 시도 차단`); throw new Error('대표·관리자만 조회할 수 있는 데이터입니다.'); };
   const clone = (x) => JSON.parse(JSON.stringify(x));
 
   WD.ATT_TYPES = [

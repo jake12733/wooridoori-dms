@@ -317,7 +317,7 @@
     const isOwner = d.ownerId === u.id || d.assigneeId === u.id;
     const canExport = WD.sec.canExport(u);
     const wfBtns = [];
-    if (WD.wf.canTransition(d, 'PENDING', u) && isOwner) wfBtns.push(`<button class="btn ghost" data-wf="PENDING">${I('send')} 대표에게 제출</button>`);
+    if (WD.wf.canTransition(d, 'PENDING', u) && isOwner && !WD.isTop(u)) wfBtns.push(`<button class="btn ghost" data-wf="PENDING">${I('send')} 대표에게 제출</button>`);
     if (WD.wf.canTransition(d, 'RESUBMITTED', u)) wfBtns.push(`<button class="btn ghost" data-wf="RESUBMITTED">${I('refresh')} 재제출</button>`);
     if (WD.isTop(u) && ['PENDING', 'RESUBMITTED'].includes(d.status)) wfBtns.push(`<button class="btn warn" data-wf="REVISION_REQUIRED">${I('pen')} 보완 요청</button>`, `<button class="btn success" data-wf="APPROVED">${I('check')} 최종 승인·잠금</button>`);
     const lastRev = [...WD.db.wfEvents].reverse().find((e) => e.docId === d.id && e.to === 'REVISION_REQUIRED');
