@@ -46,19 +46,24 @@
         return { people: per, total: { 출석: tot('출석'), 지각: tot('지각'), 병가휴가: tot('병가') + tot('휴가'), 대강: tot('대강'), pending: tot('pending') } };
       },
       /** 본인 근태 체크 (등록 후 본인 삭제·수정 불가 — locked) */
-      add(status, note = '') {
+      add(status, note = '', date = null) {
         WD.blockPreview();
         const u = me();
         if (!WD.ATT_TYPES.some((t) => t.key === status)) throw new Error('알 수 없는 근태 유형입니다.');
         if ((status === '대강' || status === '병가' || status === '휴가') && !note.trim()) throw new Error(`${status} 사유를 입력해 주세요.`);
-        const today = WD.ymd();
+        const todayStr = WD.ymd();
+        const today = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayStr; // 달력에서 고른 날짜 (기본: 오늘)
+        const diff = WD.daysLeft(today);
+        if (diff > 0 && !['휴가', '병가', '대강'].includes(status)) throw new Error('앞으로의 날짜에는 휴가·병가·대강만 등록할 수 있어요.');
+        if (diff < -62 || diff > 120) throw new Error('지난 2개월 ~ 앞으로 4개월 안의 날짜만 등록할 수 있어요.');
+        const dayLabel = today === todayStr ? '오늘' : `${+today.slice(5, 7)}월 ${+today.slice(8)}일`;
         return WD.tx((db) => {
-          if (db.attendance.some((a) => a.userId === u.id && a.date === today && a.status === status)) throw new Error(`오늘 '${status}'은(는) 이미 등록했습니다.`);
-          if ((status === '출석' || status === '지각') && db.attendance.some((a) => a.userId === u.id && a.date === today && (a.status === '출석' || a.status === '지각'))) throw new Error('오늘 출석/지각은 이미 등록했습니다. 수정은 대표에게 요청하세요.');
-          const rec = { id: WD.uid('att'), userId: u.id, date: today, time: WD.hm(), status, note: note.trim(), approved: false, approvedBy: null, createdAt: WD.now(), locked: true };
+          if (db.attendance.some((a) => a.userId === u.id && a.date === today && a.status === status)) throw new Error(`${dayLabel} '${status}'은(는) 이미 등록했습니다.`);
+          if ((status === '출석' || status === '지각') && db.attendance.some((a) => a.userId === u.id && a.date === today && (a.status === '출석' || a.status === '지각'))) throw new Error(`${dayLabel} 출석/지각은 이미 등록했습니다. 수정은 대표에게 요청하세요.`);
+          const rec = { id: WD.uid('att'), userId: u.id, date: today, time: WD.hm(), status, note: note.trim(), approved: false, approvedBy: null, createdAt: WD.now(), locked: true, lateEntry: diff < 0 };
           db.attendance.push(rec);
-          WD.audit('ATTEND_IN', { type: 'attendance', id: rec.id, name: u.name }, `${status} ${rec.time}${rec.note ? ' · ' + rec.note : ''}`);
-          WD.ceos().forEach((c) => { if (status !== '출석') WD.notify(c.id, { title: `근태 등록: ${u.name} ${status}`, body: rec.note || rec.time, link: '#/attendance', type: 'INFO' }); });
+          WD.audit('ATTEND_IN', { type: 'attendance', id: rec.id, name: u.name }, `${rec.date} ${status} ${rec.time}${rec.lateEntry ? ' (나중 등록)' : ''}${rec.note ? ' · ' + rec.note : ''}`);
+          WD.ceos().forEach((c) => { if (status !== '출석' || rec.lateEntry) WD.notify(c.id, { title: `근태 등록: ${u.name} ${dayLabel} ${status}${rec.lateEntry ? ' (나중 등록)' : ''}`, body: rec.note || rec.time, link: '#/attendance', type: 'INFO' }); });
           return clone(rec);
         });
       },

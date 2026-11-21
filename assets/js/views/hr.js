@@ -331,32 +331,62 @@
   const ACLS = { 출석: 'a-work', 지각: 'a-late', 병가: 'a-sick', 휴가: 'a-leave', 대강: 'a-sub' };
   const attBadge = (s) => `<span class="badge ${ACLS[s] || ''}">${s}</span>`;
 
-  V.attendance = (el, p, q, u) => (WD.isTop(u) ? attendanceCEO(el, q, u) : attendanceSelf(el, u));
+  V.attendance = (el, p, q, u) => (WD.isTop(u) ? attendanceCEO(el, q, u) : attendanceSelf(el, q, u));
 
-  /** 관리자·실장·직원: 큰 버튼 5개 + 사유 + 오늘 내 기록(잠금) — 타인 기록·통계는 API에서 아예 내려오지 않음 */
-  function attendanceSelf(el, u) {
+  /** 관리자·실장·직원: 큰 버튼 5개 + 사유 + 달력(날짜 선택) + 선택한 날짜 내 기록(잠금) — 타인 기록·통계는 API에서 아예 내려오지 않음 */
+  function attendanceSelf(el, q, u) {
     const today = WD.ymd();
-    const mine = WD.api.attendance.mine({ date: today }).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-    const dow = '일월화수목금토'[new Date().getDay()];
+    const sel = /^\d{4}-\d{2}-\d{2}$/.test(q.d || '') ? q.d : today;
+    const month = /^\d{4}-\d{2}$/.test(q.m || '') ? q.m : sel.slice(0, 7);
+    const [Y, M] = month.split('-').map(Number);
+    const prevM = WD.monthKey(new Date(Y, M - 2, 1)), nextM = WD.monthKey(new Date(Y, M, 1));
+    const monthRecs = WD.api.attendance.mine({ month });
+    const dayRecs = WD.api.attendance.mine({ date: sel }).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    const selD = new Date(sel + 'T00:00:00');
+    const dowName = '일월화수목금토';
+    const isToday = sel === today, isFuture = sel > today;
+    const selLabel = `${selD.getMonth() + 1}월 ${selD.getDate()}일 (${dowName[selD.getDay()]})`;
+    // 미래 날짜는 계획성 항목(휴가·병가·대강)만
+    const allowed = (k) => !isFuture || ['휴가', '병가', '대강'].includes(k);
+    // 달력 셀
+    const first = new Date(Y, M - 1, 1), days = new Date(Y, M, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < first.getDay(); i++) cells.push('<div class="cal-cell empty"></div>');
+    for (let d = 1; d <= days; d++) {
+      const date = `${month}-${WD.pad(d)}`; const w = new Date(Y, M - 1, d).getDay();
+      const recs = monthRecs.filter((a) => a.date === date);
+      cells.push(`<a class="cal-cell ${date === today ? 'today' : ''} ${date === sel ? 'sel' : ''} ${w === 0 ? 'sun' : w === 6 ? 'sat' : ''} ${date > today ? 'future' : ''}" href="#/attendance?m=${month}&d=${date}">
+        <span class="cal-day">${d}</span>
+        <span class="cal-chips">${recs.map((a) => `<span class="cal-chip ${ACLS[a.status] || ''}" title="${esc(a.status + (a.note ? ' · ' + a.note : ''))}">${a.status}</span>`).join('')}</span></a>`);
+    }
+    const cnt = (s) => monthRecs.filter((a) => a.status === s).length;
+
     el.innerHTML = `<div class="page narrow-att">
       <div class="att-hero">
-        <small class="muted">${today} (${dow})</small>
+        <small class="muted">${today} (${dowName[new Date().getDay()]})</small>
         <h1 class="att-clock" id="att-clock">${WD.hm()}</h1>
-        <p class="muted">${esc(u.name)} ${WD.roleBadge(u.role)} · 오늘 상태를 눌러 주세요</p>
+        <p class="muted">${esc(u.name)} ${WD.roleBadge(u.role)} · ${isToday ? '오늘 상태를 눌러 주세요' : `<b class="sel-date">${selLabel}</b> 기록을 등록합니다 <a href="#/attendance">오늘로 돌아가기</a>`}</p>
       </div>
-      <div class="att-buttons">${WD.ATT_TYPES.map((t) => `<button class="att-btn ${t.cls}" data-att="${t.key}">${I(t.icon)}<b>${t.key}</b><small>${t.desc}</small></button>`).join('')}</div>
+      <div class="att-buttons">${WD.ATT_TYPES.map((t) => `<button class="att-btn ${t.cls}" data-att="${t.key}" ${allowed(t.key) ? '' : 'disabled title="앞으로의 날짜에는 휴가·병가·대강만 등록할 수 있어요"'}>${I(t.icon)}<b>${t.key}</b><small>${t.desc}</small></button>`).join('')}</div>
       <div class="att-reason"><input id="att-note" maxlength="80" placeholder="사유 (병가·휴가·대강은 꼭 적어 주세요. 예: 감기 / 연차 / 3교시 김선생님 대신)"></div>
       <div class="card att-today">
-        <div class="card-head"><h3>${I('check')} 오늘 등록한 내역</h3><small class="muted">${I('lock', 'xs')} 등록 후에는 삭제·수정할 수 없어요 (수정은 대표에게 요청)</small></div>
-        ${mine.length ? `<ul class="att-list">${mine.map((a) => `<li>${attBadge(a.status)}<span class="t">${a.time}</span><span class="n">${esc(a.note || '')}</span><span class="st">${a.approved ? '<span class="tag ok">대표 확인</span>' : '<span class="tag">확인 대기</span>'} ${I('lock', 'xs')}</span></li>`).join('')}</ul>` : '<p class="muted">아직 오늘 등록한 내역이 없습니다.</p>'}
+        <div class="card-head"><h3>${I('check')} ${isToday ? '오늘' : selLabel} 등록 내역</h3><small class="muted">${I('lock', 'xs')} 등록 후에는 삭제·수정할 수 없어요 (수정은 대표에게 요청)</small></div>
+        ${dayRecs.length ? `<ul class="att-list">${dayRecs.map((a) => `<li>${attBadge(a.status)}<span class="t">${a.time}</span><span class="n">${esc(a.note || '')}${a.lateEntry ? ' <small class="muted">(나중 등록)</small>' : ''}</span><span class="st">${a.approved ? '<span class="tag ok">대표 확인</span>' : '<span class="tag">확인 대기</span>'} ${I('lock', 'xs')}</span></li>`).join('')}</ul>` : `<p class="muted">${isToday ? '아직 오늘' : '이 날짜에'} 등록한 내역이 없습니다.</p>`}
+      </div>
+      <div class="card att-cal">
+        <div class="card-head"><h3>${I('clock')} 내 출결 달력</h3>
+          <div class="seg"><a href="#/attendance?m=${prevM}&d=${sel}">‹</a><span class="seg-label">${Y}년 ${M}월</span><a href="#/attendance?m=${nextM}&d=${sel}">›</a></div></div>
+        <div class="cal-sum">${WD.ATT_TYPES.map((t) => `<span class="cal-chip ${t.cls}">${t.key} ${cnt(t.key)}</span>`).join('')}<small class="muted">이번 달 내 기록</small></div>
+        <div class="cal-grid">${['일', '월', '화', '수', '목', '금', '토'].map((d, i) => `<div class="cal-head ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${d}</div>`).join('')}${cells.join('')}</div>
+        <p class="tiny muted">날짜를 누르면 그날 한 일을 보고, 위 버튼으로 그 날짜의 출결을 등록할 수 있어요. 지난 날짜는 '나중 등록'으로 대표 확인을 거칩니다.</p>
       </div>
     </div>`;
     const tick = setInterval(() => { const c = el.querySelector('#att-clock'); if (c) c.textContent = WD.hm(); }, 10000);
     WD.app.onCleanup(() => clearInterval(tick));
     el.querySelectorAll('[data-att]').forEach((b) => b.addEventListener('click', () => {
       try {
-        const r = WD.api.attendance.add(b.dataset.att, el.querySelector('#att-note').value);
-        WD.ui.toast(`${r.status} 등록 완료 (${r.time})`);
+        const r = WD.api.attendance.add(b.dataset.att, el.querySelector('#att-note').value, sel);
+        WD.ui.toast(`${isToday ? '' : selLabel + ' '}${r.status} 등록 완료`);
         WD.app.refresh();
       } catch (e) { WD.ui.toast(e.message, 'warn'); }
     }));
@@ -393,7 +423,7 @@
       const pp = st.people.find((x) => x.user.id === b.dataset.detail);
       const rows = pp.records.sort((a, c) => (a.date + a.time < c.date + c.time ? 1 : -1));
       const m = WD.ui.modal({ title: `${pp.user.name} · ${M}월 근태 기록`, size: 'lg', hideOk: true, cancelText: '닫기',
-        body: rows.length ? `<table class="tbl compact"><thead><tr><th>날짜</th><th>시각</th><th>상태</th><th>사유</th><th>확인</th><th class="r">수정</th></tr></thead><tbody>${rows.map((r) => `<tr data-row="${r.id}"><td>${r.date}</td><td>${r.time || '-'}</td>
+        body: rows.length ? `<table class="tbl compact"><thead><tr><th>날짜</th><th>시각</th><th>상태</th><th>사유</th><th>확인</th><th class="r">수정</th></tr></thead><tbody>${rows.map((r) => `<tr data-row="${r.id}"><td>${r.date}</td><td>${r.time || '-'}${r.lateEntry ? ' <small class="muted">(나중 등록)</small>' : ''}</td>
           <td><select data-st>${WD.ATT_TYPES.map((t) => `<option ${t.key === r.status ? 'selected' : ''}>${t.key}</option>`).join('')}</select></td>
           <td><input data-note value="${esc(r.note || '')}"></td><td>${r.approved ? '<span class="tag ok">확인</span>' : '<span class="tag">대기</span>'}</td>
           <td class="r nowrap"><button class="btn sm primary" data-save-row>저장·승인</button> <button class="btn sm ghost icon-only" data-del-row title="삭제">${I('trash')}</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted">이번 달 기록이 없습니다.</p>' });
