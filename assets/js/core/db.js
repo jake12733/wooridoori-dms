@@ -40,14 +40,29 @@
     catch (e) { console.error(e); alert('브라우저 저장 공간이 부족합니다. 큰 파일은 서버 스토리지(운영 버전)를 사용하세요.'); }
   };
   /** 트랜잭션: 최신 DB를 읽고 → 변경 → 저장 (탭 간 동시성 최소화) */
-  WD.tx = (fn) => { WD.load(); const r = fn(WD.db); WD.save(); return r; };
+  WD.tx = (fn) => {
+    WD.load();
+    // 세션이 회수된(비활성화된) 계정의 탭은 어떤 쓰기도 하지 못하고 즉시 강제 로그아웃
+    const sid = sessionStorage.getItem('wd_sid');
+    if (sid && WD.db) {
+      const s = WD.db.sessions.find((x) => x.id === sid);
+      const u = s && WD.db.users.find((x) => x.id === s.userId);
+      if (!s || s.revokedAt || !u || u.status !== 'ACTIVE') {
+        const reason = s?.revokedReason === 'RESIGNED' ? '계정이 비활성화(퇴사 처리)되어 모든 세션이 만료되었습니다.' : '세션이 종료되었습니다.';
+        setTimeout(() => WD.auth?.force(reason), 0);
+        throw new Error(reason);
+      }
+    }
+    const r = fn(WD.db); WD.save(); return r;
+  };
 
   /* ---------- 조회 헬퍼 ---------- */
   WD.user = (id) => (WD.db?.users || []).find((u) => u.id === id);
   WD.userName = (id) => WD.user(id)?.name || (id ? '(퇴사/삭제된 사용자)' : '-');
   WD.activeUsers = () => WD.db.users.filter((u) => u.status === 'ACTIVE');
-  WD.staffUsers = () => WD.db.users.filter((u) => u.status === 'ACTIVE' && u.role === 'STAFF');
-  WD.ceos = () => WD.db.users.filter((u) => u.role === 'CEO' && u.status === 'ACTIVE');
+  WD.staffUsers = () => WD.db.users.filter((u) => u.status === 'ACTIVE' && (u.role === 'STAFF' || u.role === 'MANAGER'));
+  WD.ROLE_LABEL = { ADMIN: '최고 관리자', MANAGER: '실장', STAFF: '직원', RESIGNED: '비활성(퇴사)' };
+  WD.ceos = () => WD.db.users.filter((u) => u.role === 'ADMIN' && u.status === 'ACTIVE');
   WD.folder = (id) => WD.db.folders.find((f) => f.id === id);
   WD.folderPath = (id) => {
     const f = WD.folder(id); if (!f) return '-';
@@ -81,7 +96,7 @@
   WD.AUDIT_LABEL = {
     LOGIN: '로그인', LOGIN_FAIL: '로그인 실패', LOGIN_BLOCKED: '퇴사자 로그인 차단', LOGOUT: '로그아웃', SESSION_EXPIRED: '세션 만료',
     DOC_VIEW: '문서 열람', DOC_CREATE: '문서 생성', DOC_EDIT: '문서 수정(버전)', DOC_UPLOAD: '파일 업로드', DOC_MOVE: '폴더 이동',
-    DOC_DOWNLOAD: '반출(다운로드)', DOWNLOAD_DENIED: '반출 차단', PRINT_DENIED: '인쇄 차단', COPY_DENIED: '복사 차단', CAPTURE_DENIED: '캡처키 감지',
+    DOC_DOWNLOAD: '반출(다운로드)', DOWNLOAD_DENIED: '다운로드·내보내기 차단', PRINT_DENIED: '인쇄 차단', COPY_DENIED: '복사 차단', CAPTURE_DENIED: '캡처키 감지',
     DISPATCH: '원클릭 발송', WF_SUBMIT: '결재 제출', WF_APPROVE: '최종 승인·잠금', WF_REVISION: '보완 요청(반려)', WF_RESUBMIT: '재제출',
     CONTRACT_CREATE: '계약서 작성', CONTRACT_SIGN: '전자서명', CONTRACT_SEAL: '대표 직인 날인·잠금', CONTRACT_RENEW: '갱신 초안 생성',
     ATTEND_IN: '출근', ATTEND_OUT: '퇴근', ATTEND_EDIT: '근태 수정',
@@ -99,7 +114,7 @@
   WD.vault = {
     _raw() { try { return JSON.parse(localStorage.getItem(WD.VAULT_KEY)) || { records: [] }; } catch (e) { return { records: [] }; } },
     read() {
-      if (!WD.auth.isCEO()) { WD.auditTx('VAULT_DENIED', { type: 'vault' }); throw new Error('대표(CEO) 전용 보관 DB입니다.'); }
+      if (!WD.auth.isCEO()) { WD.auditTx('VAULT_DENIED', { type: 'vault' }); throw new Error('최고 관리자 전용 보관 DB입니다.'); }
       return this._raw();
     },
     put(records) {

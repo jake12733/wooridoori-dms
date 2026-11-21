@@ -14,16 +14,18 @@
     sid: () => sessionStorage.getItem(SID_KEY),
 
     async login(loginId, password) {
+      sessionStorage.removeItem(SID_KEY); // 이전(만료·회수된) 세션 흔적 제거
       WD.load();
-      const u = WD.db.users.find((x) => x.loginId === String(loginId || '').trim());
+      const key = String(loginId || '').trim().toLowerCase();
+      const u = WD.db.users.find((x) => (x.email || '').toLowerCase() === key || (x.loginId || '').toLowerCase() === key);
       const hash = await WD.sha256('wooridoori::' + password);
       if (!u || u.pwHash !== hash) {
         WD.tx(() => WD.audit('LOGIN_FAIL', { type: 'user', name: loginId, actorName: loginId || '알 수 없음' }, '아이디 또는 비밀번호 불일치'));
-        return { ok: false, msg: '아이디 또는 비밀번호가 올바르지 않습니다.' };
+        return { ok: false, msg: '이메일 또는 비밀번호가 올바르지 않습니다.' };
       }
       if (u.role === 'RESIGNED' || u.status !== 'ACTIVE') {
         WD.tx(() => WD.audit('LOGIN_BLOCKED', { type: 'user', id: u.id, name: u.name, actorName: u.name }, `퇴사일 ${WD.fmtDT(u.resignedAt)} · 계정 비활성`));
-        return { ok: false, blocked: true, msg: '퇴사 처리된 계정입니다. 시스템 접근이 차단되었습니다.\n문의: 대표(관리자)' };
+        return { ok: false, blocked: true, msg: '비활성화(퇴사 처리)된 계정입니다. 시스템 접근이 차단되었습니다.\n문의: 최고 관리자' };
       }
       const s = { id: WD.uid('ses'), userId: u.id, createdAt: WD.now(), lastSeen: WD.now(), expiresAt: new Date(Date.now() + TTL_MS).toISOString(), revokedAt: null, revokedReason: '', ua: navigator.userAgent.slice(0, 80) };
       WD.tx((db) => {
@@ -49,15 +51,15 @@
       if (!sid) return { ok: false, reason: '' };
       const s = WD.db.sessions.find((x) => x.id === sid);
       if (!s) return { ok: false, reason: '세션이 존재하지 않습니다.' };
-      if (s.revokedAt) return { ok: false, reason: s.revokedReason === 'RESIGNED' ? '퇴사 처리되어 접근 권한이 회수되었습니다. 즉시 로그아웃됩니다.' : '관리자에 의해 세션이 종료되었습니다.' };
+      if (s.revokedAt) return { ok: false, reason: s.revokedReason === 'RESIGNED' ? '계정이 비활성화(퇴사 처리)되어 모든 세션이 만료되었습니다. 강제 로그아웃됩니다.' : s.revokedReason === 'LOGOUT' ? '로그아웃되었습니다.' : '최고 관리자에 의해 세션이 종료되었습니다.' };
       if (new Date(s.expiresAt) < new Date()) return { ok: false, reason: '세션이 만료되었습니다. 다시 로그인해 주세요.', expired: true };
       const u = WD.db.users.find((x) => x.id === s.userId);
-      if (!u || u.status !== 'ACTIVE' || u.role === 'RESIGNED') return { ok: false, reason: '계정이 비활성화되었습니다.' };
+      if (!u || u.status !== 'ACTIVE' || u.role === 'RESIGNED') return { ok: false, reason: '계정이 비활성화(퇴사 처리)되어 강제 로그아웃되었습니다.' };
       return { ok: true, user: u, session: s };
     },
 
     current() { const v = auth.validate(); return v.ok ? v.user : null; },
-    isCEO() { return auth.current()?.role === 'CEO'; },
+    isCEO() { return auth.current()?.role === 'ADMIN'; },
 
     logout(reason = '', { silent = false } = {}) {
       const sid = sessionStorage.getItem(SID_KEY);
@@ -90,8 +92,10 @@
         // lastSeen 갱신 (1분 단위)
         if (Date.now() - new Date(v.session.lastSeen) > 60000) WD.tx((db) => { const s = db.sessions.find((x) => x.id === v.session.id); if (s) s.lastSeen = WD.now(); });
       };
-      window.addEventListener('storage', (e) => { if (e.key === WD.DB_KEY) check(); });
-      setInterval(check, 4000);
+      window.addEventListener('storage', (e) => { if (e.key === WD.DB_KEY) check(); }); // 같은 브라우저 다른 탭: 즉시
+      window.addEventListener('focus', check);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+      setInterval(check, 2000); // 보조 주기 검증 (2초)
     },
 
     /** 특정 사용자의 모든 세션 회수 (tx 내부에서 호출) */

@@ -10,7 +10,7 @@ export async function runExpiryAlerts() {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { rows: ceos } = await client.query(`SELECT id FROM app.users WHERE role = 'CEO' AND status = 'ACTIVE'`);
+    const { rows: ceos } = await client.query(`SELECT id FROM app.users WHERE role = 'ADMIN' AND status = 'ACTIVE'`);
     const { rows } = await client.query(`SELECT * FROM app.v_expiring`);
     let sent = 0;
     for (const a of rows) {

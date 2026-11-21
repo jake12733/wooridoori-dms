@@ -24,8 +24,8 @@
     const db = WD.db;
     return db.folders.filter((f) => !f.parentId).map((top) => {
       const kids = db.folders.filter((f) => f.parentId === top.id);
-      const opts = [top, ...kids].filter((f) => u.role === 'CEO' || (mode === 'edit' ? f.staffAccess === 'edit' : f.staffAccess !== 'none'))
-        .map((f) => `<option value="${f.id}" ${f.id === selected ? 'selected' : ''}>${f.parentId ? '└ ' : ''}${esc(f.name)}${u.role !== 'CEO' ? '' : f.staffAccess === 'none' ? ' (대표 전용)' : ''}</option>`).join('');
+      const opts = [top, ...kids].filter((f) => { const a = WD.sec.folderAccess(f, u); return mode === 'edit' ? a === 'edit' : a !== 'none'; })
+        .map((f) => `<option value="${f.id}" ${f.id === selected ? 'selected' : ''}>${f.parentId ? '└ ' : ''}${esc(f.name)}${u.role !== 'ADMIN' ? '' : f.staffAccess === 'none' ? ' (관리자 전용)' : ''}</option>`).join('');
       return opts ? `<optgroup label="${esc(top.name)}">${opts}</optgroup>` : '';
     }).join('');
   };
@@ -61,7 +61,7 @@
     const u = WD.auth.currentRaw();
     if (!WD.sec.canExport(u)) { exportDoc(d, 'blocked'); return; }
     const fm = d.kind === 'hwp' && !live ? [['original', '저장된 한글 원본']] : FORMATS[d.kind];
-    const m = WD.ui.modal({ title: '외부 반출 (대표 전용)', hideOk: true, cancelText: '닫기',
+    const m = WD.ui.modal({ title: '파일 반출 (최고 관리자 전용)', hideOk: true, cancelText: '닫기',
       body: `<p class="muted">반출 시 감사 로그에 사용자·일시·형식이 기록됩니다. PDF에는 시스템 브랜딩과 출력자가 표기됩니다.</p><div class="fmt-grid">${fm.map(([k, l]) => `<button class="btn ghost" data-fmt="${k}">${I('download')} ${l}</button>`).join('')}</div>` });
     m.el.querySelectorAll('[data-fmt]').forEach((b) => b.addEventListener('click', async () => { b.disabled = true; b.textContent = '내보내는 중…'; await exportDoc(d, b.dataset.fmt, live); m.close(); }));
   }
@@ -139,7 +139,7 @@
         <label class="fld"><span>폴더</span><select data-folder>${WD.folderOptions(u, { mode: 'edit', selected: folderId })}</select></label>
         <label class="fld"><span>문서 제목</span><input data-title placeholder="비우면 파일명 사용"></label>
         <label class="chk"><input type="checkbox" data-convert checked> 엑셀(.xlsx/.xls/.csv)·워드(.docx)는 웹 편집 형식으로 변환</label>
-        <p class="tiny muted">HWP/HWPX는 한글 엔진(rhwp)으로, PDF·이미지·텍스트는 보안 뷰어로 열립니다. 업로드된 원본은 직원 PC로 내려받을 수 없습니다.</p>`,
+        <p class="tiny muted">HWP/HWPX는 한글 엔진(rhwp)으로, PDF·이미지·텍스트는 보안 뷰어로 열립니다. 최고 관리자 외에는 업로드된 원본을 내려받을 수 없습니다.</p>`,
       onOk: async (w) => {
         const f = w.querySelector('[data-file]').files[0]; if (!f) throw new Error('파일을 선택하세요.');
         const fid = w.querySelector('[data-folder]').value; if (!fid) throw new Error('업로드 가능한 폴더가 없습니다.');
@@ -170,7 +170,7 @@
     const docs = visibleDocs(u);
     const inFolder = (d, fid) => fid === 'all' || d.folderId === fid || WD.folder(d.folderId)?.parentId === fid;
     const countIn = (fid) => docs.filter((d) => inFolder(d, fid)).length;
-    const accessOf = (f) => (u.role === 'CEO' ? 'edit' : f.staffAccess);
+    const accessOf = (f) => WD.sec.folderAccess(f, u);
     const tree = `<a class="tree-item ${folderId === 'all' ? 'active' : ''}" href="#/docs">${I('inbox')}<span>전체 문서</span><em>${docs.length}</em></a>` + tops.map((t) => {
       const kids = db.folders.filter((f) => f.parentId === t.id);
       return `<div class="tree-group"><a class="tree-item top ${folderId === t.id ? 'active' : ''}" href="#/docs/${t.id}"><span class="fdot" style="background:${t.color}"></span><span>${esc(t.name)}</span>${accessOf(t) === 'none' ? I('lock', 'xs') : ''}<em>${countIn(t.id)}</em></a>
@@ -178,7 +178,7 @@
     }).join('');
 
     let list = docs.filter((d) => inFolder(d, folderId)).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
-    const contracts = u.role === 'CEO' && ['f_hr', 'f_hr_emp', 'f_hr_inst'].includes(folderId)
+    const contracts = u.role === 'ADMIN' && ['f_hr', 'f_hr_emp', 'f_hr_inst'].includes(folderId)
       ? db.contracts.filter((c) => folderId === 'f_hr' || c.folderId === folderId) : [];
     const lvl = cur ? accessOf(cur) : null;
     const canExport = WD.sec.canExport(u);
@@ -187,14 +187,14 @@
       <div class="page-head">
         <div><div class="crumb"><a href="#/docs">통합 문서함</a>${cur ? ` / ${esc(WD.folderPath(cur.id))}` : ''}</div>
           <h1>${cur ? esc(cur.name) : '통합 문서함'}</h1>
-          <p class="muted">${cur ? `직원 권한: <b>${WD.sec.ACCESS_LABEL[cur.staffAccess]}</b>${cur.legal ? ' · <span class="tag">법정 보관 대상</span>' : ''}${u.role !== 'CEO' && cur.staffAccess === 'none' ? ' — 본인 관련 문서만 표시됩니다.' : ''}` : '인사 · 문서 · 회계 · 보안 폴더의 모든 서류를 한 곳에서 관리합니다.'}</p></div>
+          <p class="muted">${cur ? `내 권한: <b>${WD.sec.ACCESS_LABEL[accessOf(cur)]}</b>${u.role === 'ADMIN' ? ` · 직원 권한: ${WD.sec.ACCESS_LABEL[cur.staffAccess]}` : ''}${cur.legal ? ' · <span class="tag">법정 보관 대상</span>' : ''}${accessOf(cur) === 'none' ? ' — 본인 관련 문서만 표시됩니다.' : ''}` : '인사 · 문서 · 회계 · 보안 폴더의 모든 서류를 한 곳에서 관리합니다.'}</p></div>
         <div class="row gap-s wrap">
           <div class="search-box">${I('search')}<input id="doc-q" placeholder="문서 검색" value="${esc(query.q || '')}"></div>
           <div class="dd"><button class="btn primary" data-dd="newdoc">${I('plus')} 새 문서</button>
             <div class="dd-menu" data-ddm="newdoc">
               <a class="dd-item" href="#/new/sheet${cur ? '?folder=' + cur.id : ''}">${I('sheet')} 스프레드시트 (엑셀형)</a>
               <a class="dd-item" href="#/new/doc${cur ? '?folder=' + cur.id : ''}">${I('doc')} 문서 (워드형)</a>
-              <a class="dd-item" href="#/new/hwp${cur ? '?folder=' + cur.id : ''}">${I('hwp')} 한글 (HWP/HWPX)</a>
+              ${u.role === 'ADMIN' ? `<a class="dd-item" href="#/new/hwp${cur ? '?folder=' + cur.id : ''}">${I('hwp')} 한글 (HWP/HWPX)</a>` : ''}
               <a class="dd-item" href="#/templates">${I('template')} 양식 템플릿에서…</a>
             </div></div>
           <button class="btn ghost" data-upload>${I('upload')} 업로드</button>
@@ -202,7 +202,7 @@
       </div>
       <div class="docs-layout">
         <aside class="card tree">${tree}
-          <div class="legend"><div>${I('lock', 'xs')} 대표 전용 폴더</div><div><span class="tag">직원</span> 열람·웹 편집 / 열람 전용</div></div>
+          <div class="legend"><div>${I('lock', 'xs')} 관리자 전용 폴더</div><div>${I('lock', 'xs')} 다운로드·내보내기: 최고 관리자만</div></div>
         </aside>
         <section class="card flush">
           ${contracts.length ? `<div class="sub-head">${I('contract')} 계약서 (${contracts.length}) <small>계약서 관리에서 서명·직인·갱신</small></div>
@@ -213,7 +213,7 @@
             <td class="muted">${esc(WD.folderPath(d.folderId))}</td><td>${WD.ui.status(d.status)}</td><td><span class="ver">v${d.version}</span></td>
             <td class="nowrap">${esc(WD.userName(d.ownerId))}</td><td class="muted nowrap">${WD.fmtDT(d.updatedAt)}</td>
             <td class="r nowrap"><a class="btn sm ghost" href="#/doc/${d.id}">${I(WD.sec.canEdit(d, u) ? 'pen' : 'eye')} ${WD.sec.canEdit(d, u) ? '편집' : '열람'}</a>
-              <button class="btn sm ${canExport ? 'ghost' : 'locked'}" data-export="${d.id}" title="${canExport ? '외부 반출 (기록됨)' : '대표만 반출 가능 — 다운로드 차단'}">${I(canExport ? 'download' : 'lock')}</button></td></tr>`).join('')}</tbody></table>
+              ${canExport ? `<button class="btn sm ghost" data-export="${d.id}" title="다운로드·내보내기 (기록됨)">${I('download')}</button>` : ''}</td></tr>`).join('')}</tbody></table>
           ${list.length ? '' : WD.ui.empty('이 폴더에 표시할 문서가 없습니다.', 'folder')}
         </section>
       </div></div>`;
@@ -251,7 +251,7 @@
     } else if (type.startsWith('text/') || /\.(txt|md|csv|json|log)$/i.test(name)) {
       host.innerHTML = `<div class="file-view"><pre class="text-view">${esc(await rec.blob.text())}</pre></div>`;
     } else {
-      host.innerHTML = `<div class="file-view">${WD.ui.empty(`${name} (${WD.ui.fileSize(rec.size)}) — 웹 미리보기를 지원하지 않는 형식입니다. 원본 반출은 대표만 가능합니다.`, 'file')}</div>`;
+      host.innerHTML = `<div class="file-view">${WD.ui.empty(`${name} (${WD.ui.fileSize(rec.size)}) — 웹 미리보기를 지원하지 않는 형식입니다. 원본 다운로드는 최고 관리자만 가능합니다.`, 'file')}</div>`;
     }
   }
 
@@ -279,7 +279,7 @@
     const wfBtns = [];
     if (WD.wf.canTransition(d, 'PENDING', u) && isOwner) wfBtns.push(`<button class="btn ghost" data-wf="PENDING">${I('send')} 결재 제출</button>`);
     if (WD.wf.canTransition(d, 'RESUBMITTED', u)) wfBtns.push(`<button class="btn ghost" data-wf="RESUBMITTED">${I('refresh')} 재제출</button>`);
-    if (u.role === 'CEO' && ['PENDING', 'RESUBMITTED'].includes(d.status)) wfBtns.push(`<button class="btn warn" data-wf="REVISION_REQUIRED">${I('pen')} 보완 요청</button>`, `<button class="btn success" data-wf="APPROVED">${I('check')} 최종 승인·잠금</button>`);
+    if (u.role === 'ADMIN' && ['PENDING', 'RESUBMITTED'].includes(d.status)) wfBtns.push(`<button class="btn warn" data-wf="REVISION_REQUIRED">${I('pen')} 보완 요청</button>`, `<button class="btn success" data-wf="APPROVED">${I('check')} 최종 승인·잠금</button>`);
     const lastRev = [...WD.db.wfEvents].reverse().find((e) => e.docId === d.id && e.to === 'REVISION_REQUIRED');
 
     el.innerHTML = `<div class="page doc-page-v">
@@ -301,14 +301,14 @@
               ${editable && d.kind === 'sheet' ? `<button class="dd-item" data-import="sheet">${I('upload')} 엑셀/CSV 가져오기</button>` : ''}
               ${editable && d.kind === 'doc' ? `<button class="dd-item" data-import="docx">${I('upload')} Word(.docx) 가져오기</button>` : ''}
               ${editable && d.kind === 'hwp' ? `<button class="dd-item" data-import="hwp">${I('upload')} HWP/HWPX 파일 열기</button>` : ''}
-              ${['sheet', 'doc', 'hwp'].includes(d.kind) ? `<button class="dd-item" data-tpl>${I('template')} 템플릿으로 저장</button>` : ''}
+              ${(['sheet', 'doc'].includes(d.kind) || (d.kind === 'hwp' && u.role === 'ADMIN')) ? `<button class="dd-item" data-tpl>${I('template')} 템플릿으로 저장</button>` : ''}
               ${editable ? `<button class="dd-item" data-move>${I('folder')} 폴더 이동</button>` : ''}
             </div></div>
-          <button class="btn ${canExport ? 'ghost' : 'locked'}" data-export title="${canExport ? '외부 반출 (대표 전용, 기록됨)' : '다운로드·인쇄·외부 반출은 대표만 가능합니다'}">${I(canExport ? 'download' : 'lock')} ${canExport ? '반출' : '반출 차단'}</button>
+          ${canExport ? `<button class="btn ghost" data-export title="다운로드·PDF/엑셀 내보내기 (최고 관리자 전용, 기록됨)">${I('download')} 다운로드·내보내기</button>` : `<span class="tag lock dlp-tag" title="최고 관리자 외에는 파일 다운로드·PDF/엑셀 내보내기가 차단됩니다">${I('lock', 'xs')} 유출 방지(DLP) 적용</span>`}
         </div>
       </div>
       ${d.status === 'REVISION_REQUIRED' && lastRev ? `<div class="alert alert-warn">${I('alert')}<span><b>보완 요청</b> (${esc(WD.userName(lastRev.actorId))}, ${WD.fmtDT(lastRev.at)}) — ${esc(lastRev.reason)}<br><small>내용을 수정해 새 버전으로 저장한 뒤 [재제출]하세요.</small></span></div>` : ''}
-      ${!canExport ? `<div class="alert alert-info slim">${I('lock')}<span>직원 보안 모드: 웹 뷰어 열람·웹 편집만 가능합니다. 다운로드·복사·인쇄·우클릭이 차단되며 시도는 감사 로그에 기록됩니다.</span></div>` : ''}
+      ${!canExport ? `<div class="alert alert-info slim">${I('lock')}<span>문서 유출 방지(DLP): ${WD.ROLE_LABEL[u.role]} 권한은 문서 작성·열람만 가능합니다. 파일 다운로드·PDF/엑셀 내보내기·복사·인쇄·우클릭이 차단되며 시도는 감사 로그에 기록됩니다.</span></div>` : ''}
       <div class="doc-body">
         <section class="editor-area protected ${editable ? '' : 'readonly'}" id="editor-area"><div class="editor-host" id="editor-host"><div class="loading">${I('refresh', 'spin')} 편집기 불러오는 중…</div></div></section>
         <aside class="doc-side card">
@@ -379,7 +379,7 @@
       catch (err) { WD.ui.toast(err.message, 'error'); }
     }));
 
-    el.querySelector('[data-export]').addEventListener('click', () => exportMenu(d, ed));
+    el.querySelector('[data-export]')?.addEventListener('click', () => exportMenu(d, ed));
 
     // 가져오기
     el.querySelectorAll('[data-import]').forEach((b) => b.addEventListener('click', async () => {
@@ -435,6 +435,7 @@
    * ===================================================================== */
   V.newDoc = (el, { kind }, query, u) => {
     if (!['sheet', 'doc', 'hwp'].includes(kind)) { V.notFound(el); return; }
+    if (kind === 'hwp' && u.role !== 'ADMIN') { el.innerHTML = `<div class="page narrow"><div class="forbidden">${I('lock')}<h2>한글(HWP) 작성은 최고 관리자만 가능합니다</h2><p>한글 편집기는 외부 엔진 내부의 저장 단축키를 차단할 수 없어, 유출 방지를 위해 실장·직원은 보안 열람만 할 수 있습니다. 문서(워드형)·스프레드시트(엑셀형)로 작성해 주세요.</p><a class="btn primary" href="#/new/doc">문서(워드형)로 작성</a></div></div>`; return; }
     const tpls = WD.db.templates.filter((t) => t.kind === kind);
     const tpl = WD.db.templates.find((t) => t.id === query.template);
     const defFolder = query.folder || (kind === 'sheet' ? 'f_doc_attend' : 'f_doc_report');
@@ -474,13 +475,14 @@
       <div class="quick-new">
         <a class="qn" href="#/new/sheet">${WD.ui.kindIcon('sheet')}<b>빈 스프레드시트</b><small>수식·서식·표 · xlsx/csv</small></a>
         <a class="qn" href="#/new/doc">${WD.ui.kindIcon('doc')}<b>빈 문서</b><small>글꼴·표·이미지 · PDF 출력</small></a>
-        <a class="qn" href="#/new/hwp">${WD.ui.kindIcon('hwp')}<b>빈 한글 문서</b><small>HWP/HWPX · rhwp 엔진</small></a>
+        ${u.role === 'ADMIN' ? `<a class="qn" href="#/new/hwp">${WD.ui.kindIcon('hwp')}<b>빈 한글 문서</b><small>HWP/HWPX · rhwp 엔진 (관리자)</small></a>` : ''}
       </div>
       <div class="chips">${cats.map((c) => `<a class="chip ${c === cat ? 'active' : ''}" href="#/templates${c === '전체' ? '' : '?cat=' + encodeURIComponent(c)}">${esc(c)} <em>${c === '전체' ? db.templates.length : db.templates.filter((t) => t.category === c).length}</em></a>`).join('')}</div>
-      <div class="tpl-grid">${list.map((t) => `<div class="tpl-card">
+      ${list.length ? '' : WD.ui.empty('아직 등록된 양식 템플릿이 없습니다. 자주 쓰는 문서를 작성한 뒤 문서 화면의 [⋯ → 템플릿으로 저장]으로 등록하거나, 파일을 템플릿으로 등록하세요.', 'template')}
+      <div class="tpl-grid">${list.filter((t) => t.kind !== 'hwp' || u.role === 'ADMIN').map((t) => `<div class="tpl-card">
         <div class="tpl-thumb kind-${t.kind}">${WD.ui.kindIcon(t.kind)}<span>${WD.ui.KIND_LABEL[t.kind]}</span></div>
         <div class="tpl-meta"><span class="tag">${esc(t.category)}</span><b>${esc(t.title)}</b><small>${esc(WD.userName(t.ownerId))} · ${WD.ymd(new Date(t.createdAt))}</small></div>
-        <div class="row gap-s"><a class="btn sm primary" href="#/new/${t.kind}?template=${t.id}">이 양식으로 작성</a>${t.kind !== 'hwp' ? `<button class="btn sm ghost" data-pv="${t.id}">미리보기</button>` : ''}${u.role === 'CEO' || t.ownerId === u.id ? `<button class="btn sm ghost icon-only" data-del="${t.id}" title="삭제">${I('trash')}</button>` : ''}</div>
+        <div class="row gap-s"><a class="btn sm primary" href="#/new/${t.kind}?template=${t.id}">이 양식으로 작성</a>${t.kind !== 'hwp' ? `<button class="btn sm ghost" data-pv="${t.id}">미리보기</button>` : ''}${u.role === 'ADMIN' || t.ownerId === u.id ? `<button class="btn sm ghost icon-only" data-del="${t.id}" title="삭제">${I('trash')}</button>` : ''}</div>
       </div>`).join('')}</div></div>`;
     el.querySelectorAll('[data-pv]').forEach((b) => b.addEventListener('click', async () => {
       const t = db.templates.find((x) => x.id === b.dataset.pv);
@@ -495,13 +497,13 @@
     }));
     el.querySelector('[data-up-tpl]').addEventListener('click', () => {
       WD.ui.modal({ title: '파일을 템플릿으로 등록', okText: '등록',
-        body: `<label class="fld"><span>파일 (.xlsx .csv .docx .hwp .hwpx)</span><input type="file" data-f accept=".xlsx,.xls,.csv,.docx,.hwp,.hwpx"></label><label class="fld"><span>템플릿 이름</span><input data-n></label><label class="fld"><span>카테고리</span><select data-c>${['보고서', '출석부', '안내문', '확인서', '회계', '계약서', '기타'].map((c) => `<option>${c}</option>`).join('')}</select></label>`,
+        body: `<label class="fld"><span>파일 (.xlsx .csv .docx${u.role === 'ADMIN' ? ' .hwp .hwpx' : ''})</span><input type="file" data-f accept=".xlsx,.xls,.csv,.docx${u.role === 'ADMIN' ? ',.hwp,.hwpx' : ''}"></label><label class="fld"><span>템플릿 이름</span><input data-n></label><label class="fld"><span>카테고리</span><select data-c>${['보고서', '출석부', '안내문', '확인서', '회계', '계약서', '기타'].map((c) => `<option>${c}</option>`).join('')}</select></label>`,
         onOk: async (w) => {
           const f = w.querySelector('[data-f]').files[0]; if (!f) throw new Error('파일을 선택하세요.');
           const ext = f.name.split('.').pop().toLowerCase(); let kind, content;
           if (['xlsx', 'xls', 'csv'].includes(ext)) { kind = 'sheet'; content = await WD.editors.sheet.importFile(f); }
           else if (ext === 'docx') { kind = 'doc'; content = await WD.editors.doc.importDocx(f); }
-          else if (['hwp', 'hwpx'].includes(ext)) { kind = 'hwp'; content = { fileId: await WD.files.put(f, { name: f.name }), name: f.name }; }
+          else if (['hwp', 'hwpx'].includes(ext) && u.role === 'ADMIN') { kind = 'hwp'; content = { fileId: await WD.files.put(f, { name: f.name }), name: f.name }; }
           else throw new Error('지원하지 않는 형식입니다.');
           const title = w.querySelector('[data-n]').value.trim() || f.name.replace(/\.[^.]+$/, '');
           WD.tx((db2) => { const t = { id: WD.uid('tpl'), category: w.querySelector('[data-c]').value, title, kind, content, ownerId: u.id, createdAt: WD.now() }; db2.templates.push(t); WD.audit('TEMPLATE_SAVE', { type: 'template', id: t.id, name: title }, `파일 등록: ${f.name}`); });

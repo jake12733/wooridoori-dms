@@ -5,7 +5,7 @@ import { requireRole } from '../middleware/rbac.js';
 import { audit } from '../middleware/audit.js';
 
 const r = Router();
-r.use(requireRole('CEO'));
+r.use(requireRole('ADMIN'));
 
 // 퇴사 전 점검: 미결 문서 + 보관 이관 대상 미리보기
 r.get('/:id/resign-preview', async (req, res, next) => {

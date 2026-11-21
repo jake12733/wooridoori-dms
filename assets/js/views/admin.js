@@ -21,7 +21,7 @@
     const sum = (a) => a.reduce((s, [, v]) => s + v, 0);
     const bar = (list, color) => { const max = Math.max(1, ...list.map(([, v]) => v)); return list.map(([k, v]) => `<div class="hbar"><span>${esc(k)}</span><div><i style="width:${(v / max) * 100}%;background:${color}"></i></div><b>${WD.won(v)}</b></div>`).join(''); };
     el.innerHTML = `<div class="page">
-      <div class="page-head"><div><h1>경영 · 매출 장부</h1><p class="muted">회사 매출·지출·순수익을 월별로 기록하고 대시보드와 연동합니다. (대표 전용)</p></div>
+      <div class="page-head"><div><h1>경영 · 매출 장부</h1><p class="muted">회사 매출·지출·순수익을 월별로 기록하고 대시보드와 연동합니다. (최고 관리자 전용)</p></div>
         <div class="row gap-s"><select id="fm">${months.map((m) => `<option ${m === month ? 'selected' : ''}>${m}</option>`).join('')}</select><button class="btn primary" data-add>${I('plus')} 기록 추가</button><button class="btn ghost" data-csv>${I('download')} CSV 반출</button></div></div>
       <div class="kpis"><div class="kpi big"><small>${month} 매출</small><b>${WD.won(sum(rev))}</b></div><div class="kpi big"><small>${month} 지출</small><b>${WD.won(sum(exp))}</b></div><div class="kpi big ${sum(rev) - sum(exp) >= 0 ? 'ok' : 'danger'}"><small>${month} 순수익</small><b>${WD.won(sum(rev) - sum(exp))}</b></div></div>
       <div class="dash-grid">
@@ -55,7 +55,7 @@
     const KIND = { contract: ['계약서', 'contract'], attendance: ['근태', 'clock'], document: ['서류', 'doc'] };
     const kindLabel = (r) => (r.kind === 'document' ? (/국세/.test(r.basis || '') ? '회계·정산' : '인사 서류') : KIND[r.kind][0]);
     el.innerHTML = `<div class="page">
-      <div class="page-head"><div><h1>법정 보관 DB <span class="tag lock">${I('lock', 'xs')} 대표 전용</span></h1><p class="muted">퇴사자의 계약서·근태·정산 기록 등 법적 보관 의무 자료를 일반 열람 영역과 분리해 보관합니다. 별도 저장소(운영: 별도 스키마·암호화·RLS)로 격리되며 열람도 감사 로그에 기록됩니다.</p></div></div>
+      <div class="page-head"><div><h1>법정 보관 DB <span class="tag lock">${I('lock', 'xs')} 최고 관리자 전용</span></h1><p class="muted">퇴사자의 계약서·근태·정산 기록 등 법적 보관 의무 자료를 일반 열람 영역과 분리해 보관합니다. 별도 저장소(운영: 별도 스키마·암호화·RLS)로 격리되며 열람도 감사 로그에 기록됩니다.</p></div></div>
       <div class="chips"><a class="chip ${!q.u ? 'active' : ''}" href="#/vault">전체 <em>${vault.records.length}</em></a>${people.map((id) => { const r = vault.records.find((x) => x.userId === id); return `<a class="chip ${q.u === id ? 'active' : ''}" href="#/vault?u=${id}">${esc(r.userName)} <em>${vault.records.filter((x) => x.userId === id).length}</em></a>`; }).join('')}</div>
       <div class="card flush"><table class="tbl"><thead><tr><th>구분</th><th>기록</th><th>대상자</th><th>이관일</th><th>보존 기한</th><th>근거</th><th class="r"></th></tr></thead><tbody>
       ${recs.map((r) => { const left = WD.daysLeft(r.retainUntil); return `<tr><td class="nowrap">${I(KIND[r.kind][1])} ${kindLabel(r)}</td><td><b>${esc(r.title)}</b></td><td class="nowrap">${esc(r.userName)}</td><td class="nowrap">${WD.fmtDT(r.movedAt)}</td><td class="nowrap">${r.retainUntil} ${left < 0 ? '<span class="tag danger">파기 대상</span>' : `<small class="muted">(${(left / 365).toFixed(1)}년 남음)</small>`}</td><td class="tiny muted">${esc(r.basis || '')}</td><td class="r nowrap"><button class="btn sm ghost" data-open="${r.id}">${I('eye')} 열람</button></td></tr>`; }).join('') || `<tr><td colspan="7">${WD.ui.empty('보관된 기록이 없습니다.', 'vault')}</td></tr>`}
@@ -73,7 +73,7 @@
         else body = `<p class="muted">파일 형식 문서: ${esc(v?.content?.name || '')} (원본은 파일 저장소에 보관)</p>`;
       }
       const m = WD.ui.modal({ title: `보관 기록 · ${r.title}`, size: 'lg', hideOk: true, cancelText: '닫기', body: `<div class="protected vault-view" id="vv">${body}</div><p class="tiny muted mt-s">보존 근거: ${esc(r.basis || '')} · 보존 기한 ${r.retainUntil}</p>` });
-      WD.sec.watermark(m.el.querySelector('#vv'), { label: '법정 보관 DB · 대표 열람본' });
+      WD.sec.watermark(m.el.querySelector('#vv'), { label: '법정 보관 DB · 최고 관리자 열람' });
     }));
   };
 
@@ -92,7 +92,7 @@
     if (q.s) logs = logs.filter((l) => `${l.targetName} ${l.detail}`.toLowerCase().includes(q.s.toLowerCase()));
     const qs = (o) => '#/audit?' + new URLSearchParams(Object.fromEntries(Object.entries({ ...q, ...o }).filter(([, v]) => v))).toString();
     el.innerHTML = `<div class="page">
-      <div class="page-head"><div><h1>감사 로그 (Audit Trail)</h1><p class="muted">문서 열람 시각, 수정 버전(v1, v2…), 원클릭 발송, 승인/반려, 반출·차단, 퇴사 권한 회수 내역을 사용자·일시 기준으로 자동 기록합니다. 기록은 추가만 가능(append-only)하며 대표만 조회할 수 있습니다.</p></div>
+      <div class="page-head"><div><h1>감사 로그 (Audit Trail)</h1><p class="muted">문서 열람 시각, 수정 버전(v1, v2…), 원클릭 발송, 승인/반려, 반출·차단, 퇴사 권한 회수 내역을 사용자·일시 기준으로 자동 기록합니다. 기록은 추가만 가능(append-only)하며 최고 관리자만 조회할 수 있습니다.</p></div>
         <button class="btn ghost" data-csv>${I('download')} CSV 반출</button></div>
       <div class="chips">${Object.entries(GROUPS).map(([k, v]) => `<a class="chip ${g === k ? 'active' : ''} ${k === 'deny' ? 'danger' : ''}" href="${qs({ f: k === 'all' ? '' : k })}">${v} <em>${db.auditLogs.filter((l) => inGroup(l.action, k)).length}</em></a>`).join('')}</div>
       <form class="card filters" id="af"><select name="user"><option value="">모든 사용자</option>${users.map((x) => `<option ${q.user === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
@@ -135,23 +135,19 @@
         <div class="arch">
           <div class="arch-col"><div class="arch-h">클라이언트 (브라우저)</div><div class="arch-b">SPA (HTML/CSS/JS)<small>역할별 UI · 해시 라우터</small></div><div class="arch-b">웹 오피스<small>x-spreadsheet+SheetJS · Quill 2 · rhwp(WASM)</small></div><div class="arch-b warn">반출 억제 계층<small>워터마크 · 우클릭/복사/인쇄 차단 · 다운로드 버튼 잠금</small></div></div>
           <div class="arch-arrow">${I('arrow')}<small>HTTPS · HttpOnly 세션 쿠키</small></div>
-          <div class="arch-col"><div class="arch-h">API 서버</div><div class="arch-b">인증·세션 검증<small>매 요청 role·status·revoked 재확인</small></div><div class="arch-b">권한 엔진 (RBAC+폴더 ACL)<small>CEO / STAFF / RESIGNED</small></div><div class="arch-b warn">반출 게이트<small>CEO만 서명 URL(60초) 발급</small></div><div class="arch-b">워크플로우·발송·알림</div></div>
+          <div class="arch-col"><div class="arch-h">API 서버</div><div class="arch-b">인증·세션 검증<small>매 요청 role·status·revoked 재확인</small></div><div class="arch-b">권한 엔진 (RBAC+폴더 ACL)<small>ADMIN / MANAGER(실장) / STAFF / RESIGNED</small></div><div class="arch-b warn">반출 게이트<small>ADMIN만 서명 URL(60초) 발급</small></div><div class="arch-b">워크플로우·발송·알림</div></div>
           <div class="arch-arrow">${I('arrow')}</div>
-          <div class="arch-col"><div class="arch-h">데이터</div><div class="arch-b">PostgreSQL (app 스키마)<small>문서·버전·워크플로우·근태·계약 + RLS</small></div><div class="arch-b vault">보관 DB (vault 스키마)<small>대표 전용 · 별도 롤 · 암호화</small></div><div class="arch-b">비공개 오브젝트 스토리지<small>원본 파일 · 공개 URL 없음</small></div><div class="arch-b">audit_logs (append-only)<small>해시 체인 · UPDATE/DELETE 금지</small></div></div>
+          <div class="arch-col"><div class="arch-h">데이터</div><div class="arch-b">PostgreSQL (app 스키마)<small>문서·버전·워크플로우·근태·계약 + RLS</small></div><div class="arch-b vault">보관 DB (vault 스키마)<small>최고 관리자 전용 · 별도 롤 · 암호화</small></div><div class="arch-b">비공개 오브젝트 스토리지<small>원본 파일 · 공개 URL 없음</small></div><div class="arch-b">audit_logs (append-only)<small>해시 체인 · UPDATE/DELETE 금지</small></div></div>
         </div>
-        <p class="tiny muted">이 데모(MVP)는 서버 없이 브라우저 저장소(localStorage = app DB, 분리 키 = vault, IndexedDB = 파일 스토리지)로 같은 흐름을 재현합니다. 브라우저 측 차단은 억제 수단이며, 운영에서는 서버 권한 검증이 최종 방어선입니다.</p></div>
+        <p class="tiny muted">현재 버전은 서버 없이 브라우저 저장소(localStorage = app DB, 분리 키 = vault, IndexedDB = 파일 스토리지)로 같은 흐름을 재현합니다. 브라우저 측 차단은 억제 수단이며, 운영에서는 서버 권한 검증이 최종 방어선입니다.</p></div>
       <div class="grid2">
-        <div class="card"><h3>권한 매트릭스</h3><table class="tbl compact"><thead><tr><th>기능</th><th class="c">CEO</th><th class="c">STAFF</th><th class="c">RESIGNED</th></tr></thead><tbody>
-          ${[['로그인', '✔', '✔', '✖ 차단'], ['지정 폴더 웹 열람·편집', '✔', '✔ (폴더 ACL)', '✖'], ['다운로드·인쇄·복사·내보내기', '✔ (기록)', '✖ 차단·기록', '✖'], ['결재 승인·보완 요청', '✔', '✖', '✖'], ['원클릭 발송', '✔', '✔', '✖'], ['계약서 작성·직인', '✔', '서명만', '✖'], ['보관 DB·감사 로그', '✔', '✖', '✖'], ['경영 대시보드·런처', '✔', '✖', '✖']].map((r) => `<tr><td>${r[0]}</td><td class="c">${r[1]}</td><td class="c">${r[2]}</td><td class="c">${r[3]}</td></tr>`).join('')}</tbody></table></div>
+        <div class="card"><h3>권한 매트릭스 (문서 유출 방지)</h3><table class="tbl compact"><thead><tr><th>기능</th><th class="c">최고 관리자</th><th class="c">실장</th><th class="c">직원</th><th class="c">비활성(퇴사)</th></tr></thead><tbody>
+          ${[['로그인', '✔', '✔', '✔', '✖ 즉시 차단'], ['문서 작성(새 버전 저장)', '✔', '✔ 관리자 전용 폴더 제외', '✔ 폴더 권한 내', '✖'], ['문서 열람', '✔ 전체', '✔ 관리자 전용 폴더 제외', '✔ 폴더 권한 내', '✖'], ['파일 다운로드 · PDF/엑셀 내보내기', '✔ (기록)', '✖ 차단', '✖ 차단', '✖'], ['우클릭 · 복사(Ctrl+C) · 인쇄(Ctrl+P)', '✔', '✖ 차단·기록', '✖ 차단·기록', '✖'], ['한글(HWP) 편집', '✔', '보안 열람만', '보안 열람만', '✖'], ['결재 승인·보완 요청', '✔', '✖', '✖', '✖'], ['계정 발급·비활성화 · 보관 DB · 감사 로그', '✔', '✖', '✖', '✖']].map((r) => `<tr><td>${r[0]}</td><td class="c">${r[1]}</td><td class="c">${r[2]}</td><td class="c">${r[3]}</td><td class="c">${r[4]}</td></tr>`).join('')}</tbody></table></div>
         <div class="card"><h3>오픈소스 구성 (무료)</h3><table class="tbl compact"><tbody>
           <tr><td>스프레드시트</td><td>x-data-spreadsheet (MIT) + SheetJS CE (Apache-2.0)</td></tr><tr><td>문서 편집기</td><td>Quill 2 (BSD-3), mammoth.js (BSD-2), html2pdf.js (MIT)</td></tr>
           <tr><td>한글 HWP/HWPX</td><td>rhwp @rhwp/editor (MIT, Rust+WASM)</td></tr><tr><td>PDF 보안 뷰어</td><td>PDF.js (Apache-2.0)</td></tr><tr><td>차트</td><td>Chart.js (MIT)</td></tr><tr><td>글꼴</td><td>Pretendard, 나눔·고운 (OFL)</td></tr></tbody></table></div>
       </div>
-      <div class="card"><h3>데모 데이터</h3><p class="muted">이 브라우저에 저장된 데모 데이터를 처음 상태로 되돌립니다.</p><button class="btn danger" data-reset>${I('refresh')} 데모 초기화</button></div>
+
     </div>`;
-    el.querySelector('[data-reset]').addEventListener('click', async () => {
-      if (!(await WD.ui.confirm('데모 초기화', '모든 데모 데이터를 초기화하고 로그아웃합니다.', { danger: true }))) return;
-      await WD.resetDemo(); sessionStorage.setItem('wd_logout_reason', '데모 데이터를 초기화했습니다.'); location.hash = '#/login'; WD.app.route();
-    });
   };
 })();

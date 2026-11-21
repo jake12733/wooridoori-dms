@@ -119,6 +119,8 @@
         style: { bgcolor: '#ffffff', align: 'left', valign: 'middle', textwrap: false, strike: false, underline: false, color: '#1d2a26', font: { name: 'Arial', size: 10, bold: false, italic: false } },
       });
       s.loadData(JSON.parse(JSON.stringify(data && data.length ? data : [{ name: 'Sheet1' }])));
+      // 최고 관리자 외: 스프레드시트 자체 인쇄 버튼 제거 (인쇄도 반출 경로)
+      if (!WD.sec.isAdmin()) holder.querySelectorAll('.x-spreadsheet-toolbar-btn').forEach((b) => { if (b.querySelector('.print') || /print|인쇄/i.test(b.getAttribute('data-tooltip') || '')) b.remove(); });
       let dirty = false;
       s.change(() => { dirty = true; onChange && onChange(); });
       const api = {

@@ -16,7 +16,7 @@
   const short = (n) => { const a = Math.abs(n); return (n < 0 ? '-' : '') + (a >= 1e8 ? (a / 1e8).toFixed(2) + '억' : a >= 1e4 ? Math.round(a / 1e4).toLocaleString('ko-KR') + '만' : a.toLocaleString('ko-KR')); };
   WD.shortWon = short;
 
-  WD.launcherGrid = (items) => `<div class="launcher-grid">${items.map((l) => `<a class="launch" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer" title="${esc(l.url)}"><span class="launch-ico" style="background:${esc(l.color || '#2f7d62')}">${esc(l.name.slice(0, 1))}</span><b>${esc(l.name)}</b><small>${esc(l.category || '')}</small></a>`).join('')}</div>`;
+  WD.launcherGrid = (items) => !items.length ? `<p class="muted">등록된 바로가기가 없습니다. <a href="#/launcher">원클릭 런처</a>에서 블로그·인스타그램·거래처·업무 포털을 추가하세요.</p>` : `<div class="launcher-grid">${items.map((l) => `<a class="launch" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer" title="${esc(l.url)}"><span class="launch-ico" style="background:${esc(l.color || '#2f7d62')}">${esc(l.name.slice(0, 1))}</span><b>${esc(l.name)}</b><small>${esc(l.category || '')}</small></a>`).join('')}</div>`;
 
   async function drawChart(canvas, rows) {
     try { await WD.ui.loadScript(WD.ui.LIBS.chart); } catch (e) { canvas.replaceWith(Object.assign(document.createElement('p'), { className: 'muted', textContent: '차트 라이브러리를 불러오지 못했습니다.' })); return; }
@@ -33,7 +33,7 @@
     WD.app.onCleanup(() => ch.destroy());
   }
 
-  V.dashboard = async (el, p, q, u) => (u.role === 'CEO' ? ceoDash(el, u) : staffDash(el, u));
+  V.dashboard = async (el, p, q, u) => (u.role === 'ADMIN' ? ceoDash(el, u) : staffDash(el, u));
 
   function ceoDash(el, u) {
     const db = WD.db;
@@ -54,7 +54,7 @@
     const security = db.auditLogs.filter((l) => ['DOWNLOAD_DENIED', 'PRINT_DENIED', 'COPY_DENIED', 'CAPTURE_DENIED', 'ACCESS_DENIED', 'LOGIN_BLOCKED'].includes(l.action) && Date.now() - new Date(l.at) < 30 * 864e5).length;
 
     el.innerHTML = `<div class="page">
-      <div class="page-head"><div><small class="muted">${today} · ${esc(WD.ORG)}</small><h1>대표 경영 대시보드</h1><p class="muted">${esc(u.name)} 대표님, 결재 대기 ${waiting.length}건 · 만료 임박 ${alerts.length}건 · 서류 미제출 ${tot.miss}건이 있습니다.</p></div>
+      <div class="page-head"><div><small class="muted">${today} · ${esc(WD.ORG)}</small><h1>경영 대시보드</h1><p class="muted">${esc(u.name)} ${esc(u.title || '')}님, 결재 대기 ${waiting.length}건 · 만료 임박 ${alerts.length}건 · 서류 미제출 ${tot.miss}건이 있습니다.</p></div>
         <div class="row gap-s"><a class="btn ghost" href="#/finance">${I('chart')} 장부 관리</a><a class="btn primary" href="#/workflow">${I('flow')} 결재함</a></div></div>
       <div class="kpis">
         <div class="kpi big"><small>${+month.slice(5)}월 매출</small><b>${short(cur.rev)}원</b><span class="${pct(cur.rev, prev.rev) >= 0 ? 't-ok' : 't-danger'}">전월 대비 ${pct(cur.rev, prev.rev) >= 0 ? '▲' : '▼'} ${Math.abs(pct(cur.rev, prev.rev))}%</span></div>
@@ -70,7 +70,7 @@
           <ul class="mini-list">${alerts.slice(0, 6).map((a) => `<li><a href="${a.link}"><span class="dd-b">${WD.ui.dday(a.days)}</span><span><b>${esc(a.title)}</b><small>${a.kind} · ${a.end}${a.renewed ? ' · 갱신 초안 있음' : ''}</small></span></a></li>`).join('') || '<li class="muted pad">30일 이내 만료 예정이 없습니다.</li>'}</ul></section>
         <section class="card"><div class="card-head"><h3>${I('list')} 필수 서류 누락·보완</h3><a href="#/checklist" class="link">체크리스트</a></div>
           <div class="tri"><div><b class="t-danger">${tot.miss}</b><small>미제출</small></div><div><b class="t-warn">${tot.rev}</b><small>보완 대기</small></div><div><b>${tot.review}</b><small>검토 중</small></div></div>
-          <ul class="mini-list compact">${docStat.map((s) => `<li><div class="row gap-s center">${WD.ui.avatar(s.x, 22)}<b>${esc(s.x.name)}</b></div><div class="progress sm"><span style="width:${Math.round((s.done / s.total) * 100)}%"></span></div><small>${s.done}/${s.total}${s.miss ? ` · <span class="t-danger">미제출 ${s.miss}</span>` : ''}${s.rev ? ` · <span class="t-warn">보완 ${s.rev}</span>` : ''}</small></li>`).join('')}</ul></section>
+          <ul class="mini-list compact">${docStat.map((s) => `<li><div class="row gap-s center">${WD.ui.avatar(s.x, 22)}<b>${esc(s.x.name)}</b></div><div class="progress sm"><span style="width:${(s.total ? Math.round((s.done / s.total) * 100) : 100)}%"></span></div><small>${s.done}/${s.total}${s.miss ? ` · <span class="t-danger">미제출 ${s.miss}</span>` : ''}${s.rev ? ` · <span class="t-warn">보완 ${s.rev}</span>` : ''}</small></li>`).join('')}</ul></section>
         <section class="card"><div class="card-head"><h3>${I('clock')} 근태 요약 (${+month.slice(5)}월)</h3><a href="#/attendance" class="link">상세</a></div>
           <table class="tbl compact"><thead><tr><th>직원</th><th class="c">오늘</th><th class="c">지각</th><th class="c">조퇴</th><th class="c">병가·휴가</th><th class="c">대강</th></tr></thead><tbody>
           ${staff.map((x) => { const mine = att.filter((a) => a.userId === x.id); const t = db.attendance.find((a) => a.userId === x.id && a.date === today); const c = (s) => mine.filter((a) => s.includes(a.status)).length; return `<tr><td>${esc(x.name)}</td><td class="c">${t ? `<span class="badge ${t.status === '근무' ? 'st-approved' : 'st-pending'}">${t.status}</span>` : '<span class="muted">-</span>'}</td><td class="c">${c(['지각']) || '-'}</td><td class="c">${c(['조퇴']) || '-'}</td><td class="c">${c(['병가', '휴가']) || '-'}</td><td class="c">${c(['대강']) || '-'}</td></tr>`; }).join('')}</tbody></table></section>
@@ -93,10 +93,11 @@
     const set = WD.wf.checklistFor(u);
     const items = set.items.map((it) => ({ it, ...WD.wf.submissionStatus(u.id, it) }));
     const done = items.filter((i) => i.st === 'DONE').length;
+    const pctDone = items.length ? Math.round((done / items.length) * 100) : 100;
     const alerts = WD.wf.expiryAlerts(u.id);
     const sentContract = db.contracts.find((c) => c.userId === u.id && c.status === 'SENT');
     el.innerHTML = `<div class="page">
-      <div class="page-head"><div><small class="muted">${today}</small><h1>${esc(u.name)} ${esc(u.title)}님, 안녕하세요</h1><p class="muted">${esc(u.dept)} · ${esc(u.empType)} · 문서는 웹에서 열람·편집할 수 있으며 외부 반출은 대표만 가능합니다.</p></div>
+      <div class="page-head"><div><small class="muted">${today}</small><h1>${esc(u.name)} ${esc(u.title)}님, 안녕하세요</h1><p class="muted">${esc(u.dept)} · ${esc(u.empType)} · 문서 작성·열람만 가능하며 파일 다운로드·PDF/엑셀 내보내기는 최고 관리자만 가능합니다.</p></div>
         <div class="row gap-s"><a class="btn primary" href="#/templates">${I('plus')} 새 문서</a></div></div>
       ${sentContract ? `<div class="alert alert-warn">${I('pen')}<span><b>계약서 서명 요청</b> ${esc(sentContract.title)} — <a href="#/contract/${sentContract.id}">지금 확인하고 전자서명하기</a></span></div>` : ''}
       ${alerts.map((a) => `<div class="alert alert-info slim">${I('alert')}<span>[${a.bucket}] ${a.kind}: ${esc(a.title)} (만료일 ${a.end})</span></div>`).join('')}
@@ -104,14 +105,14 @@
         <section class="card"><div class="card-head"><h3>${I('clock')} 오늘 출결</h3><a href="#/attendance" class="link">근태</a></div>
           <div class="today-att">${t ? `<span class="badge st-approved">${t.status}</span><p>출근 <b>${t.in || '-'}</b> · 퇴근 <b>${t.out || '-'}</b></p>` : '<p class="muted">아직 출근 기록이 없습니다.</p>'}<a class="btn ${t?.in ? 'ghost' : 'primary'} block" href="#/attendance">${t?.in ? (t.out ? '기록 보기' : '퇴근하기') : '출근하기'}</a></div></section>
         <section class="card"><div class="card-head"><h3>${I('list')} 내 필수 서류</h3><a href="#/checklist" class="link">제출하기</a></div>
-          <div class="big-pct"><b>${Math.round((done / items.length) * 100)}%</b><small>${done}/${items.length} 완료</small></div><div class="progress"><span style="width:${Math.round((done / items.length) * 100)}%"></span></div>
+          <div class="big-pct"><b>${pctDone}%</b><small>${done}/${items.length} 완료</small></div><div class="progress"><span style="width:${pctDone}%"></span></div>
           <ul class="mini-list compact">${items.filter((i) => i.st !== 'DONE').map((i) => `<li><span>${esc(i.it.name)}</span>${WD.ui.subStatus(i.st)}</li>`).join('') || '<li class="t-ok">모두 제출 완료</li>'}</ul></section>
         <section class="card"><div class="card-head"><h3>${I('inbox')} 수신함</h3><a href="#/inbox" class="link">전체</a></div>
           <ul class="mini-list">${notes.map((n) => `<li class="${n.read ? '' : 'unread'}"><a href="${n.link || '#/inbox'}"><span><b>${esc(n.title)}</b><small>${esc(n.body)}</small></span></a></li>`).join('') || '<li class="muted pad">새 알림이 없습니다.</li>'}</ul></section>
         <section class="card span2"><div class="card-head"><h3>${I('doc')} 내 문서 진행 상태</h3><a href="#/workflow" class="link">워크플로우</a></div>
           <table class="tbl compact"><thead><tr><th>문서</th><th>상태</th><th>버전</th><th>수정일</th></tr></thead><tbody>${myDocs.slice(0, 8).map((d) => `<tr class="click" onclick="location.hash='#/doc/${d.id}'"><td>${WD.ui.kindIcon(d.kind)} ${esc(d.title)}</td><td>${WD.ui.status(d.status)}</td><td><span class="ver">v${d.version}</span></td><td class="muted">${WD.fmtDT(d.updatedAt)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">작성한 문서가 없습니다.</td></tr>'}</tbody></table></section>
         <section class="card"><div class="card-head"><h3>${I('template')} 빠른 작성</h3></div>
-          <div class="quick-col">${db.templates.slice(0, 5).map((tp) => `<a class="qrow" href="#/new/${tp.kind}?template=${tp.id}">${WD.ui.kindIcon(tp.kind)}<span>${esc(tp.title)}</span></a>`).join('')}</div></section>
+          <div class="quick-col">${db.templates.length ? '' : '<a class="qrow" href="#/new/doc">' + WD.ui.kindIcon('doc') + '<span>새 문서(워드형) 작성</span></a><a class="qrow" href="#/new/sheet">' + WD.ui.kindIcon('sheet') + '<span>새 스프레드시트 작성</span></a>'}${db.templates.filter((t) => t.kind !== 'hwp').slice(0, 5).map((tp) => `<a class="qrow" href="#/new/${tp.kind}?template=${tp.id}">${WD.ui.kindIcon(tp.kind)}<span>${esc(tp.title)}</span></a>`).join('')}</div></section>
       </div></div>`;
   }
 })();

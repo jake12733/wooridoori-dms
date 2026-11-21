@@ -52,7 +52,7 @@ r.post('/:id/transition', async (req, res, next) => {
       if (to === 'REVISION_REQUIRED' || to === 'APPROVED') {
         for (const uid of new Set([d.owner_id, d.assignee_id].filter(Boolean))) await notify(c, uid, { type: to === 'APPROVED' ? 'APPROVED' : 'REVISION', title: `${to === 'APPROVED' ? '최종 승인' : '보완 요청'}: ${d.title}`, body: reason || '', link: `#/doc/${d.id}`, documentId: d.id });
       } else {
-        const { rows: ceos } = await c.query(`SELECT id FROM app.users WHERE role = 'CEO' AND status = 'ACTIVE'`);
+        const { rows: ceos } = await c.query(`SELECT id FROM app.users WHERE role = 'ADMIN' AND status = 'ACTIVE'`);
         for (const x of ceos) await notify(c, x.id, { type: 'APPROVAL', title: `${to === 'PENDING' ? '결재 요청' : '재제출'}: ${d.title}`, link: `#/doc/${d.id}`, documentId: d.id });
       }
       return e;
@@ -72,11 +72,11 @@ r.post('/:id/dispatch', async (req, res, next) => {
       let targets = [];
       const active = async (sql, args = []) => (await c.query(`SELECT id FROM app.users WHERE status = 'ACTIVE' AND ${sql}`, args)).rows.map((x) => x.id);
       switch (p.action) {
-        case 'SUBMIT_CEO': targets = await active(`role = 'CEO'`);
+        case 'SUBMIT_CEO': targets = await active(`role = 'ADMIN'`);
           if (d.status === 'DRAFT' || d.status === 'REVISION_REQUIRED') await c.query(`INSERT INTO app.workflow_events (document_id, from_status, to_status, actor_id, version) VALUES ($1,$2,$3,$4,0)`, [d.id, d.status, d.status === 'DRAFT' ? 'PENDING' : 'RESUBMITTED', req.user.id]);
           break;
         case 'REQUEST_USER': targets = await active('id = $1', [p.target_user_id]); await c.query('UPDATE app.documents SET assignee_id = $2 WHERE id = $1', [d.id, targets[0]]); break;
-        case 'SAVE_FOLDER': await c.query('UPDATE app.documents SET folder_id = $2 WHERE id = $1', [d.id, p.folder_id]); targets = await active(`(role = 'CEO' OR (SELECT staff_access FROM app.folders WHERE id = $1) <> 'none') AND id <> $2`, [p.folder_id, req.user.id]); break;
+        case 'SAVE_FOLDER': await c.query('UPDATE app.documents SET folder_id = $2 WHERE id = $1', [d.id, p.folder_id]); targets = await active(`(role = 'ADMIN' OR (SELECT staff_access FROM app.folders WHERE id = $1) <> 'none') AND id <> $2`, [p.folder_id, req.user.id]); break;
         case 'BROADCAST': targets = await active('id <> $1', [req.user.id]); break;
         case 'DEPT': targets = await active('dept = $1 AND id <> $2', [p.dept, req.user.id]); break;
         default: targets = await active('id = ANY($1)', [customTargets]); if (folderId) await c.query('UPDATE app.documents SET folder_id = $2 WHERE id = $1', [d.id, folderId]);

@@ -1,7 +1,7 @@
 // 역할 기반 접근 제어
 import { audit } from './audit.js';
 
-/** requireRole('CEO') — 실패 시 403 + 감사 로그(차단 기록) */
+/** requireRole('ADMIN') — 실패 시 403 + 감사 로그(차단 기록) */
 export const requireRole = (...roles) => async (req, res, next) => {
   if (req.user && roles.includes(req.user.role)) return next();
   const action = req.baseUrl.startsWith('/files') ? 'DOWNLOAD_DENIED' : 'ACCESS_DENIED';

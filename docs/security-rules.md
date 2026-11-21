@@ -1,6 +1,7 @@
 # 보안 규칙 — 다운로드 차단 · 감사 로그 · 퇴사자 통제
 
 우리두리사회적협동조합 문서관리시스템의 보안 설계 원칙과 구현 규칙입니다.
+적용 대상: **최고 관리자(ADMIN)를 제외한 실장(MANAGER)·직원(STAFF)** — 문서 작성·열람만 허용, 파일 다운로드·PDF/엑셀 내보내기 완전 차단.
 원칙: **서버가 최종 판정, 브라우저는 억제와 기록.** 화면 차단만으로는 사진 촬영·외부 캡처를 막을 수 없으므로, 반출 경로를 서버에서 끊고 모든 시도를 남겨 추적성을 확보합니다.
 
 ---
@@ -23,7 +24,7 @@
 
 ### 2.1 서버 측 (최종 방어선)
 1. **원본 파일은 비공개 버킷**에 저장. 퍼블릭 URL·정적 경로 없음. 버킷 정책: API 서비스 계정만 `GetObject`.
-2. `GET /files/:id/download` → `rbac.requireRole('CEO')` 통과 시에만 **60초 유효 서명 URL** 발급(`Content-Disposition: attachment`), `DOC_DOWNLOAD` 기록.
+2. `GET /files/:id/download` → `rbac.requireRole('ADMIN')` 통과 시에만 **60초 유효 서명 URL** 발급(`Content-Disposition: attachment`), `DOC_DOWNLOAD` 기록.
 3. 직원 요청은 `403` + `DOWNLOAD_DENIED` 기록. 직원 열람은 `GET /files/:id/render`(PDF→이미지 타일, 문서→HTML)로만 제공하며 응답 헤더:
    `Cache-Control: no-store` · `Content-Disposition: inline` · `X-Content-Type-Options: nosniff` · `Content-Security-Policy: default-src 'self'; frame-ancestors 'self'`.
 4. 내보내기 API(`/documents/:id/export?format=xlsx|pdf|hwp`)도 동일 게이트. 서버 렌더 PDF에는 **출력자·일시·문서 ID 워터마크** 삽입.
@@ -33,8 +34,8 @@
 ### 2.2 클라이언트 측 (억제 · 기록) — `assets/js/core/security.js`
 | 통제 | 구현 |
 |---|---|
-| 다운로드 버튼 | 직원은 `반출 차단` 잠금 버튼 표시 → 클릭 시 `WD.sec.exportDoc()`가 거부하고 `DOWNLOAD_DENIED` 기록 |
-| 단일 반출 관문 | 모든 다운로드는 `exportDoc()` → `saveBlob()` 경유, `saveBlob()`도 CEO 재검증 |
+| 다운로드·내보내기 버튼 | 실장·직원 화면에는 버튼 자체를 표시하지 않음(‘유출 방지(DLP) 적용’ 표시). 스프레드시트 자체 인쇄 버튼도 제거 |
+| 단일 반출 관문 | 모든 다운로드는 `exportDoc()` → `saveBlob()` 경유, `saveBlob()`도 ADMIN 재검증 |
 | 우클릭 | `contextmenu` 캡처 단계 차단 (스프레드시트 자체 메뉴는 편집용으로 허용) |
 | 복사/잘라내기 | `.protected` 영역에서 `copy`/`cut` 차단, 클립보드에 경고문 기록, `COPY_DENIED` |
 | 인쇄 | `Ctrl+P` 차단, `beforeprint` 기록, `@media print`에서 직원 화면 전체 숨김 + 안내문 |
@@ -43,12 +44,15 @@
 | 드래그 | 이미지·캔버스 드래그 아웃 차단 |
 | 텍스트 선택 | 읽기 전용 뷰어·계약서·미리보기에서 `user-select: none` |
 | PDF·이미지 | 브라우저 내장 PDF 뷰어(다운로드 버튼 있음) 대신 PDF.js 캔버스 렌더, 이미지는 배경 렌더 |
-| 워터마크 | 시스템명 + 사용자명(아이디) + 열람 일시 + "열람 전용 · 외부 반출 금지"를 대각선 반복, `pointer-events:none`, MutationObserver로 제거·숨김 시 즉시 복원 + 기록 |
+| 워터마크 | 로그인 사용자 **이름 · 이메일 · 현재 시간(초 단위 실시간 갱신)** + 시스템명을 대각선 반복하는 반투명 오버레이, `pointer-events:none`, MutationObserver로 제거·숨김 시 즉시 복원 + 기록 |
+| 텍스트 드래그 | 열람 화면은 `selectstart` 차단 + `user-select:none`, 편집 화면도 Ctrl+C/X 키 자체 차단 |
+| 개발자 도구 | F12, Ctrl+Shift+I/J/C, Ctrl+U 차단(억제 목적) |
 
-### 2.3 한글(rhwp) iframe 주의
-rhwp 에디터는 별도 오리진 iframe이라 상위 페이지가 내부 단축키를 제어할 수 없습니다.
-- MVP: 직원은 메뉴바 숨김(`chrome.menu=false`) + 상위 워터마크 + 반출 버튼 비노출.
-- 운영: rhwp-studio를 **자체 도메인에 셀프 호스팅**하고 직원용 빌드에서 `file:save`, `file:print`, 다운로드 커맨드를 제거, CSP `frame-src`를 자체 도메인으로 제한.
+### 2.3 한글(rhwp) — 보안 열람 모드
+rhwp 편집기는 별도 오리진 iframe이라 내부 Ctrl+S(다른 이름으로 저장)를 상위 페이지가 막을 수 없음을 확인했습니다(2026-11-21 테스트).
+- 실장·직원: rhwp 엔진을 화면 밖 `inert` iframe에서 문서 해석에만 쓰고, 페이지를 SVG로 변환해 상위 페이지에 렌더한 뒤 iframe을 제거 → 키보드가 iframe에 닿지 않아 저장·인쇄 경로가 없음. 우클릭·복사·인쇄 차단과 워터마크 그대로 적용.
+- 한글 편집·새 한글 문서 작성은 최고 관리자만. 실장·직원은 문서(워드형)·스프레드시트로 작성.
+- 운영: rhwp-studio 자체 호스팅 + 저장/인쇄 커맨드 제거 빌드로 실장·직원 편집 허용 가능.
 
 ### 2.4 한계와 보완
 화면 촬영(휴대폰)·외부 캡처 프로그램은 기술적으로 완전 차단이 불가능합니다 → 개인 식별 워터마크로 **유출 시 추적 가능**하게 하고, 보안서약서·취업규칙·근로계약서 비밀유지 조항으로 법적 억지력을 확보합니다. 필요 시 MDM/DRM(사내 PC 에이전트) 연동을 2단계로 검토합니다.
@@ -82,7 +86,11 @@ rhwp 에디터는 별도 오리진 iframe이라 상위 페이지가 내부 단�
 
 ---
 
-## 4. 퇴사자 통제
+## 4. 계정 비활성화(퇴사자) 통제
+
+- 비활성화 확정 즉시 해당 계정의 **모든 세션 `revoked_at` 기록** → 열린 화면 강제 로그아웃(MVP: 같은 브라우저 다른 탭 즉시 + 2초 주기·포커스 복귀 시 재검증, 회수된 세션의 모든 쓰기 요청 거부), 재로그인 `LOGIN_BLOCKED`.
+- 개별 [세션 종료]·[비밀번호 재설정] 시에도 해당 계정 세션 전부 만료.
+
 
 ### 4.1 절차 (화면: 인사·퇴사 관리 → 퇴사 처리)
 1. **인수인계 점검**: 퇴사자가 작성자/담당자인 미결 문서(`status ≠ APPROVED`)를 모두 나열 → 인수자 지정 + 인계 확인. 하나라도 미체크면 확정 불가(서버 프로시저도 미결 문서 존재 시 예외).

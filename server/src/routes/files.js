@@ -53,7 +53,7 @@ r.get('/:id/render', async (req, res, next) => {
 });
 
 // 대표 전용: 원본 반출 (60초 서명 URL)
-r.get('/:id/download', requireRole('CEO'), async (req, res, next) => {
+r.get('/:id/download', requireRole('ADMIN'), async (req, res, next) => {
   try {
     const doc = await withUser(req.user, (c) => loadVersion(c, req.params.id));
     if (!doc) return res.status(404).end();

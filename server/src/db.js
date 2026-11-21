@@ -15,7 +15,7 @@ export async function withUser(user, fn, { vault = false } = {}) {
     await client.query('BEGIN');
     await client.query(`SELECT set_config('app.user_id', $1, true), set_config('app.role', $2, true)`, [user.id, user.role]);
     if (vault) {
-      if (user.role !== 'CEO') throw Object.assign(new Error('대표 전용 보관 DB입니다.'), { status: 403 });
+      if (user.role !== 'ADMIN') throw Object.assign(new Error('대표 전용 보관 DB입니다.'), { status: 403 });
       await client.query('SET LOCAL ROLE wd_vault');
     }
     const result = await fn(client);

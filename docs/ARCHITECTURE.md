@@ -9,7 +9,7 @@
 
 | 단계 | 산출물 | 위치 |
 |---|---|---|
-| 1. 요구사항 → 역할·권한 모델 | CEO / STAFF / RESIGNED, 폴더 ACL, 반출 게이트 | 본 문서 §3, `security-rules.md` |
+| 1. 요구사항 → 역할·권한 모델 | ADMIN / STAFF / RESIGNED, 폴더 ACL, 반출 게이트 | 본 문서 §3, `security-rules.md` |
 | 2. 전체 아키텍처 | 클라이언트 · API · DB(app/vault/audit) · 스토리지 | 본 문서 §2 |
 | 3. 폴더 구조 | 프론트(MVP) + 서버 레퍼런스 | 본 문서 §5 |
 | 4. DB 스키마 | PostgreSQL + RLS + 트리거 + 퇴사 프로시저 | `schema.sql` |
@@ -33,7 +33,7 @@
                 │ HTTPS · HttpOnly+Secure+SameSite=Strict 세션 쿠키 · CSRF 토큰
 ┌───────────────▼──────────────── API 서버 (Node/Express) ────────────────┐
 │ auth 미들웨어: 매 요청 세션 해시 조회 → revoked/expired/status 재검증   │
-│ RBAC + 폴더 ACL 엔진 (CEO/STAFF/RESIGNED)                               │
+│ RBAC + 폴더 ACL 엔진 (ADMIN/STAFF/RESIGNED)                               │
 │ 반출 게이트: CEO에게만 60초 서명 URL 발급, 직원은 서버 렌더 스트림만     │
 │ 워크플로우 전이 · 원클릭 발송 · 알림(WebSocket/SSE) · 만료 알림 크론     │
 │ audit 미들웨어: 모든 민감 행위 append-only 기록                          │
@@ -54,10 +54,10 @@ GitHub Pages 정적 호스팅이라 서버가 없으므로 같은 흐름을 브�
 | 운영 구성요소 | MVP 대체 | 파일 |
 |---|---|---|
 | PostgreSQL `app` | `localStorage['wd_db_v1']` (테이블 구조 동일) | `core/db.js` |
-| PostgreSQL `vault` | 분리된 키 `localStorage['wd_vault_v1']`, CEO 검증 후만 읽기 | `core/db.js` (`WD.vault`) |
+| PostgreSQL `vault` | 분리된 키 `localStorage['wd_vault_v1']`, ADMIN 검증 후만 읽기 | `core/db.js` (`WD.vault`) |
 | 오브젝트 스토리지 | IndexedDB `wd_files_v1` | `core/filestore.js` |
 | 세션 테이블 + 미들웨어 | `sessions` 테이블 + 탭별 sessionStorage SID + 4초 재검증 + storage 이벤트 | `core/auth.js` |
-| 반출 게이트 | `WD.sec.exportDoc()` 단일 관문 (CEO 아니면 거부·기록) | `core/security.js` |
+| 반출 게이트 | `WD.sec.exportDoc()` 단일 관문 (ADMIN 아니면 거부·기록) | `core/security.js` |
 | 전이 트리거 | `WD.wf.transition()` 허용 전이표 | `core/workflow.js` |
 
 > 브라우저 측 차단은 **억제·기록** 수단입니다. 운영에서는 서버 권한 검증(§security-rules)이 최종 방어선입니다.
@@ -66,7 +66,7 @@ GitHub Pages 정적 호스팅이라 서버가 없으므로 같은 흐름을 브�
 
 ## 3. 역할 · 권한 모델
 
-| 기능 | CEO (대표) | STAFF (선생님/행정) | RESIGNED (퇴사자) |
+| 기능 | ADMIN (대표) | STAFF (선생님/행정) | RESIGNED (퇴사자) |
 |---|---|---|---|
 | 로그인 | ✔ | ✔ | ✖ 즉시 차단 |
 | 지정 폴더 문서 웹 열람 | ✔ 전체 | ✔ 폴더 ACL(`view`/`edit`) + 본인 작성·담당·수신 문서 | ✖ |
@@ -184,14 +184,20 @@ DRAFT ──제출──▶ PENDING ──보완 요청(사유 필수)──▶ 
 
 ---
 
-## 7. 샘플 데이터 (데모 계정, 비밀번호 1234)
+## 7. 초기 구성 (샘플 데이터 없음)
 
-| 아이디 | 이름 | 역할 | 시연 포인트 |
-|---|---|---|---|
-| ceo | 김우리 | CEO | 결재 6건, 만료 알림, 퇴사 처리, 보관 DB, 감사 로그, 반출 |
-| teacher1 | 이두리 | STAFF · 정규직 | 안내문 결재 대기, 보건증 D-30, 근로계약 D-30 |
-| teacher2 | 박하늘 | STAFF · 위촉강사 | 보고서 보완 요청 → 수정 → 재제출, 위촉계약 D-14 |
-| teacher3 | 최은솔 | STAFF · 위촉강사 | 미결 문서 3건 → 퇴사 인수인계 시연, 위촉계약 D-7 |
-| admin1 | 정민지 | STAFF · 행정 | 정산표 재제출(v2), 서류 보완 대기 |
-| teacher4 | 강서준 | STAFF · 정규직 | 갱신 근로계약서 서명 대기 |
-| former | 한지훈 | RESIGNED | 로그인 차단, 보관 DB 기록 3건 |
+1. 첫 접속 시 **최초 설정**: 최고 관리자(대표) 이름·이메일·비밀번호(8자 이상) 입력 → ADMIN 계정 생성
+2. 최고 관리자가 [인사·계정 관리]에서 실장(MANAGER)·직원(STAFF) 계정을 이메일로 발급
+3. 기본 제공: 폴더 구조(인사·문서·회계·보안), 고용 유형별 기본 필수 서류 세트(수정 가능), 발송 프리셋 2종
+4. 문서·템플릿·계약·근태·장부·런처는 모두 최고 관리자/실장이 직접 작성·등록
+
+## 8. 문서 유출 방지(DLP) 요약
+
+| 통제 | 최고 관리자 | 실장 · 직원 |
+|---|---|---|
+| 문서 작성 · 열람 | ✔ | ✔ (폴더 권한 내, 실장은 관리자 전용 폴더 제외 전체) |
+| 파일 다운로드 · PDF/엑셀/HWP 내보내기 | ✔ (감사 기록) | ✖ 버튼 미노출 + 반출 게이트 거부·기록 |
+| 우클릭 · 복사(Ctrl+C/X) · 텍스트 드래그 · 인쇄(Ctrl+P) · 저장(Ctrl+S) | ✔ | ✖ 차단·기록 (열람 화면 텍스트 선택 불가) |
+| 워터마크 | 이름·이메일·현재 시간 | 이름·이메일·현재 시간(초 단위 갱신) + "열람 전용·외부 반출 금지" |
+| 한글(HWP) | 전체 편집기 | 보안 열람(페이지를 SVG로 상위 페이지에 렌더, rhwp iframe은 비활성) |
+| 계정 비활성화 | — | 모든 세션 즉시 만료 → 같은 브라우저의 열린 탭은 즉시, 그 외 2초 이내 강제 로그아웃 · 모든 쓰기 차단 |

@@ -12,24 +12,35 @@
   const isStaff = () => document.body.classList.contains('staff-mode');
 
   const sec = {
-    ACCESS_LABEL: { edit: '열람·웹 편집', view: '열람 전용', none: '대표 전용' },
+    ACCESS_LABEL: { edit: '작성·열람', view: '열람 전용', none: '관리자 전용' },
+    isAdmin: (u = WD.auth.currentRaw()) => u?.role === 'ADMIN',
 
-    /** 문서 접근 수준: 'edit' | 'view' | 'none' */
+    /** 폴더 접근 수준: 최고 관리자=전체 / 실장=관리자 전용 제외 작성·열람 / 직원=폴더 ACL */
+    folderAccess(f, u = WD.auth.currentRaw()) {
+      if (!f || !u) return 'none';
+      if (u.role === 'ADMIN') return 'edit';
+      if (u.role === 'MANAGER') return f.staffAccess === 'none' ? 'none' : 'edit';
+      if (u.role === 'STAFF') return f.staffAccess || 'none';
+      return 'none';
+    },
+
+    /** 문서 접근 수준: 'edit'(작성·열람) | 'view'(열람) | 'none' — 어떤 수준이든 비관리자는 반출 불가 */
     level(doc, u = WD.auth.currentRaw()) {
       if (!doc || !u) return 'none';
-      if (u.role === 'CEO') return doc.locked ? 'view' : 'edit';
-      if (u.role !== 'STAFF') return 'none';
-      const f = WD.folder(doc.folderId);
-      let lvl = f?.staffAccess || 'none';
+      if (u.role === 'ADMIN') return doc.locked ? 'view' : 'edit';
+      if (u.role !== 'STAFF' && u.role !== 'MANAGER') return 'none';
+      let lvl = sec.folderAccess(WD.folder(doc.folderId), u);
       if (doc.ownerId === u.id || doc.assigneeId === u.id) lvl = 'edit';
       else if ((doc.recipients || []).includes(u.id) && lvl === 'none') lvl = 'view';
       if (doc.locked && lvl === 'edit') lvl = 'view';
+      // 한글(HWP) 편집기는 외부 iframe 내부 저장 단축키를 막을 수 없어 비관리자는 보안 열람만 허용
+      if (doc.kind === 'hwp' && lvl === 'edit') lvl = 'view';
       return lvl;
     },
     canView: (doc, u) => sec.level(doc, u) !== 'none',
     canEdit: (doc, u) => sec.level(doc, u) === 'edit',
     /** 외부 반출(다운로드/인쇄/내보내기)은 대표만 */
-    canExport: (u = WD.auth.currentRaw()) => u?.role === 'CEO',
+    canExport: (u = WD.auth.currentRaw()) => u?.role === 'ADMIN',
 
     /** 반출 요청 게이트 — 모든 다운로드는 이 함수를 통과해야 함 */
     async exportDoc(target, format, fn) {
@@ -37,7 +48,7 @@
       const t = { type: target.type || 'document', id: target.id, name: target.title || target.name };
       if (!sec.canExport(u)) {
         WD.auditTx('DOWNLOAD_DENIED', t, `${format} 반출 시도 차단 (role=${u?.role || '-'})`);
-        WD.ui.toast('외부 반출 권한이 없습니다. 다운로드·인쇄·내보내기는 대표만 가능하며 시도 기록이 남았습니다.', 'error');
+        WD.ui.toast('파일 다운로드·PDF/엑셀 내보내기는 최고 관리자만 가능합니다. 시도 기록이 남았습니다.', 'error');
         return false;
       }
       try { await fn(); WD.auditTx('DOC_DOWNLOAD', t, `${format} 반출`); return true; }
@@ -54,13 +65,28 @@
 
     /** 역할별 body 모드 적용 */
     applyMode(u) {
-      document.body.classList.toggle('staff-mode', !!u && u.role !== 'CEO');
-      document.body.classList.toggle('ceo-mode', u?.role === 'CEO');
+      document.body.classList.toggle('staff-mode', !!u && u.role !== 'ADMIN');
+      document.body.classList.toggle('ceo-mode', u?.role === 'ADMIN');
     },
 
     /** 전역 반출 억제 리스너 (1회 설치) */
     installGuards() {
       if (sec._installed) return; sec._installed = true;
+      // 개발자 도구·소스 보기 단축키 (억제 목적)
+      document.addEventListener('keydown', (e) => {
+        if (!isStaff()) return;
+        const k = e.key.toLowerCase();
+        if (e.key === 'F12' || ((e.ctrlKey || e.metaKey) && e.shiftKey && ['i', 'j', 'c'].includes(k)) || ((e.ctrlKey || e.metaKey) && k === 'u')) { e.preventDefault(); e.stopPropagation(); }
+        if ((e.ctrlKey || e.metaKey) && (k === 'c' || k === 'x') && document.activeElement?.closest?.('.protected')) {
+          // 편집기 내부 복사도 시스템 클립보드로 나가지 않게 키 자체를 차단
+          e.preventDefault(); e.stopPropagation();
+          deny('COPY_DENIED', '문서 내용은 복사할 수 없습니다. (기록됨)', `단축키 Ctrl+${k.toUpperCase()}`);
+        }
+      }, true);
+      document.addEventListener('selectstart', (e) => {
+        // 열람 전용 화면: 텍스트 드래그 선택 자체 차단 (편집 중인 입력칸은 허용)
+        if (isStaff() && e.target.closest?.('.protected.readonly, .no-select') && !e.target.closest?.('input, textarea')) e.preventDefault();
+      }, true);
       const deny = (action, msg, detail) => {
         if (throttle(action)) { WD.auditTx(action, { type: 'page', name: location.hash }, detail); }
         WD.ui.toast(msg, 'warn');
@@ -84,7 +110,7 @@
         const k = e.key.toLowerCase();
         if ((e.ctrlKey || e.metaKey) && (k === 's' || k === 'p')) {
           e.preventDefault(); e.stopPropagation();
-          deny(k === 'p' ? 'PRINT_DENIED' : 'DOWNLOAD_DENIED', k === 'p' ? '인쇄는 대표만 가능합니다. (기록됨)' : '로컬 저장은 대표만 가능합니다. (기록됨)', `단축키 Ctrl+${k.toUpperCase()}`);
+          deny(k === 'p' ? 'PRINT_DENIED' : 'DOWNLOAD_DENIED', k === 'p' ? '인쇄는 최고 관리자만 가능합니다. (기록됨)' : '파일 저장·다운로드는 최고 관리자만 가능합니다. (기록됨)', `단축키 Ctrl+${k.toUpperCase()}`);
         }
       }, true);
       document.addEventListener('keyup', (e) => {
@@ -93,31 +119,40 @@
         document.body.classList.add('shield'); setTimeout(() => document.body.classList.remove('shield'), 1800);
         deny('CAPTURE_DENIED', '화면 캡처가 감지되어 기록되었습니다.', 'PrintScreen 키');
       });
-      window.addEventListener('beforeprint', () => { if (isStaff()) deny('PRINT_DENIED', '인쇄는 대표만 가능합니다. (기록됨)', '브라우저 인쇄 메뉴'); });
+      window.addEventListener('beforeprint', () => { if (isStaff()) deny('PRINT_DENIED', '인쇄는 최고 관리자만 가능합니다. (기록됨)', '브라우저 인쇄 메뉴'); });
     },
 
-    /** 워터마크 오버레이 (제거 시 자동 복원) */
+    /** 워터마크 이미지: 사용자 이름 · 이메일 · 현재 시간(초 단위 갱신) */
+    watermarkImage(u, label) {
+      const c = document.createElement('canvas'); c.width = 460; c.height = 250;
+      const g = c.getContext('2d');
+      const now = new Date();
+      const ts = `${WD.ymd(now)} ${WD.pad(now.getHours())}:${WD.pad(now.getMinutes())}:${WD.pad(now.getSeconds())}`;
+      g.translate(230, 125); g.rotate(-0.42); g.textAlign = 'center';
+      g.fillStyle = 'rgba(31,95,74,0.16)'; g.font = '700 16px Pretendard, "Malgun Gothic", sans-serif';
+      g.fillText(`${u.name} · ${u.email || u.loginId}`, 0, -16);
+      g.font = '600 14px Pretendard, "Malgun Gothic", sans-serif';
+      g.fillText(ts, 0, 6);
+      g.font = '500 12px Pretendard, "Malgun Gothic", sans-serif';
+      g.fillStyle = u.role === 'ADMIN' ? 'rgba(31,95,74,0.12)' : 'rgba(178,69,58,0.17)';
+      g.fillText(`${WD.BRAND} · ${label || (u.role === 'ADMIN' ? '최고 관리자 열람' : '열람 전용 · 외부 반출 금지')}`, 0, 26);
+      return c.toDataURL();
+    },
+
+    /** 워터마크 오버레이 (반투명, 현재 시간 실시간 갱신, 제거 시 자동 복원) */
     watermark(el, opts = {}) {
       const u = WD.auth.currentRaw(); if (!el || !u) return;
-      const c = document.createElement('canvas'); c.width = 420; c.height = 230;
-      const g = c.getContext('2d');
-      g.translate(210, 115); g.rotate(-0.42);
-      g.textAlign = 'center';
-      g.fillStyle = 'rgba(31,95,74,0.13)'; g.font = '700 15px Pretendard, "Malgun Gothic", sans-serif';
-      g.fillText(WD.BRAND, 0, -14);
-      g.font = '500 13px Pretendard, "Malgun Gothic", sans-serif';
-      g.fillText(`${u.name} (${u.loginId}) · ${WD.fmtDT(WD.now())}`, 0, 8);
-      g.fillStyle = u.role === 'CEO' ? 'rgba(31,95,74,0.10)' : 'rgba(178,69,58,0.14)';
-      g.fillText(opts.label || (u.role === 'CEO' ? '대표 열람본' : '열람 전용 · 외부 반출 금지'), 0, 28);
-      const url = c.toDataURL();
+      let url = sec.watermarkImage(u, opts.label);
       const make = () => { const d = document.createElement('div'); d.className = 'wm-overlay'; d.setAttribute('aria-hidden', 'true'); d.style.backgroundImage = `url(${url})`; return d; };
+      const tick = setInterval(() => { if (!el.isConnected) { clearInterval(tick); return; } url = sec.watermarkImage(u, opts.label); ov.style.backgroundImage = `url(${url})`; }, 1000);
+      WD.app?.onCleanup(() => clearInterval(tick));
       if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
       let ov = make(); el.appendChild(ov);
       const mo = new MutationObserver(() => {
         if (!el.isConnected) { mo.disconnect(); return; }
         if (!ov.isConnected || ov.style.backgroundImage.indexOf('data:') < 0 || ov.style.display === 'none' || ov.style.opacity === '0') {
           ov.remove(); ov = make(); el.appendChild(ov); mo.observe(ov, { attributes: true });
-          if (u.role !== 'CEO' && throttle('WM')) WD.auditTx('ACCESS_DENIED', { type: 'watermark', name: location.hash }, '워터마크 제거 시도 감지·복원');
+          if (u.role !== 'ADMIN' && throttle('WM')) WD.auditTx('ACCESS_DENIED', { type: 'watermark', name: location.hash }, '워터마크 제거 시도 감지·복원');
         }
       });
       mo.observe(el, { childList: true, subtree: false, attributes: true, attributeFilter: ['style', 'class'] });

@@ -21,7 +21,7 @@
   /* ---------- 계약서 본문 렌더 ---------- */
   WD.renderContract = (c) => {
     const emp = WD.user(c.userId) || { name: c.userName || '(퇴사자)', phone: '' };
-    const ceo = WD.db.users.find((x) => x.role === 'CEO');
+    const ceo = WD.db.users.find((x) => x.role === 'ADMIN');
     const yr = (s) => s ? `${s.slice(0, 4)}년 ${+s.slice(5, 7)}월 ${+s.slice(8, 10)}일` : '';
     const isEmp = c.kind === '근로';
     const pay = isEmp ? `${c.payType} ${WD.won(c.pay)}` : `${c.payType} ${WD.won(c.pay)}`;
@@ -122,7 +122,7 @@
 
   /* ---------------- 계약서 목록 ---------------- */
   V.contracts = (el, p, q, u) => {
-    const db = WD.db; const isCEO = u.role === 'CEO';
+    const db = WD.db; const isCEO = u.role === 'ADMIN';
     const list = db.contracts.filter((c) => isCEO || c.userId === u.id).sort((a, b) => (a.end > b.end ? 1 : -1));
     const alerts = WD.wf.expiryAlerts(isCEO ? null : u.id);
     const buckets = ['D-7', 'D-14', 'D-30'];
@@ -136,7 +136,7 @@
       </tbody></table>${list.length ? '' : WD.ui.empty('계약서가 없습니다.', 'contract')}</div></div>`;
     el.querySelectorAll('[data-href]').forEach((r) => r.addEventListener('click', (e) => { if (!e.target.closest('a,button')) location.hash = r.dataset.href; }));
     el.querySelectorAll('[data-renew]').forEach((b) => b.addEventListener('click', () => renewDraft(db.contracts.find((c) => c.id === b.dataset.renew))));
-    el.querySelectorAll('[data-new]').forEach((b) => b.addEventListener('click', () => contractForm(u, { kind: b.dataset.new }, (v) => {
+    el.querySelectorAll('[data-new]').forEach((b) => b.addEventListener('click', () => !WD.staffUsers().length ? WD.ui.toast('먼저 [인사·계정 관리]에서 직원 계정을 등록하세요.', 'warn') : contractForm(u, { kind: b.dataset.new }, (v) => {
       const emp = WD.user(v.userId);
       const c = WD.tx((db2) => { const nc = { ...v, id: WD.uid('c'), title: `${v.kind === '근로' ? '근로계약서' : '위촉계약서'} (${emp.name})`, status: 'DRAFT', locked: false, createdAt: WD.now(), folderId: v.kind === '근로' ? 'f_hr_emp' : 'f_hr_inst' }; db2.contracts.push(nc); WD.audit('CONTRACT_CREATE', { type: 'contract', id: nc.id, name: nc.title }); return nc; });
       WD.app.go(`#/contract/${c.id}`);
@@ -147,7 +147,7 @@
   V.contract = (el, { id }, q, u) => {
     const db = WD.db; const c = db.contracts.find((x) => x.id === id);
     if (!c) { el.innerHTML = `<div class="page">${WD.ui.empty('계약서를 찾을 수 없습니다. (퇴사자 계약서는 법정 보관 DB로 이관됩니다)', 'alert')}</div>`; return; }
-    const isCEO = u.role === 'CEO';
+    const isCEO = u.role === 'ADMIN';
     if (!isCEO && c.userId !== u.id) { WD.auditTx('ACCESS_DENIED', { type: 'contract', id: c.id, name: c.title }, '타인 계약서 열람 시도'); V.forbidden(el); return; }
     WD.auditTx('DOC_VIEW', { type: 'contract', id: c.id, name: c.title }, `계약서 열람 (${CST[c.status][0]})`);
     const steps = ['DRAFT', 'SENT', 'SIGNED', 'SEALED'];
@@ -161,7 +161,7 @@
           ${isCEO && c.status === 'SENT' ? '<span class="muted">직원 서명 대기 중</span>' : ''}
           ${isCEO && c.status === 'SIGNED' ? `<button class="btn success" data-seal>${I('stamp')} 대표 직인 날인·잠금</button>` : ''}
           ${isCEO && c.status === 'SEALED' ? `<button class="btn ghost" data-renew>${I('refresh')} 재계약/갱신 초안</button>` : ''}
-          <button class="btn ${isCEO ? 'ghost' : 'locked'}" data-pdf>${I(isCEO ? 'download' : 'lock')} ${isCEO ? 'PDF 반출' : '반출 차단'}</button>
+          ${isCEO ? `<button class="btn ghost" data-pdf>${I('download')} PDF 내보내기</button>` : `<span class="tag lock">${I('lock', 'xs')} 유출 방지(DLP) 적용</span>`}
         </div></div>
       <div class="steps">${['초안 작성', '서명 요청', '직원 전자서명', '대표 직인·잠금'].map((s, i) => `<div class="step ${i <= si ? 'done' : ''} ${i === si ? 'cur' : ''}"><span>${i + 1}</span><b>${s}</b></div>`).join('')}</div>
       <div class="contract-wrap protected" id="cw">${WD.renderContract(c)}</div></div>`;
@@ -179,7 +179,7 @@
       save((x) => { x.status = 'SEALED'; x.sealedAt = WD.now(); x.locked = true; WD.notify(x.userId, { title: `계약 체결 완료: ${x.title}`, body: '대표 직인이 날인되어 계약서가 확정·잠금되었습니다.', link: `#/contract/${x.id}`, type: 'APPROVED' }); }, 'CONTRACT_SEAL', '전자 직인 날인 · 완료 문서 잠금');
     });
     el.querySelector('[data-renew]')?.addEventListener('click', () => renewDraft(c));
-    el.querySelector('[data-pdf]').addEventListener('click', () => WD.sec.exportDoc({ type: 'contract', id: c.id, title: c.title }, 'PDF', async () => {
+    el.querySelector('[data-pdf]')?.addEventListener('click', () => WD.sec.exportDoc({ type: 'contract', id: c.id, title: c.title }, 'PDF', async () => {
       await WD.editors.doc.ensure();
       const blob = await WD.editors.doc.toPdfBlob(c.title, WD.renderContract(c));
       WD.sec.saveBlob(blob, `${c.title}.pdf`);
@@ -193,7 +193,7 @@
   const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
 
   V.attendance = (el, p, q, u) => {
-    const db = WD.db; const isCEO = u.role === 'CEO';
+    const db = WD.db; const isCEO = u.role === 'ADMIN';
     const month = q.m || WD.monthKey();
     const [Y, M] = month.split('-').map(Number);
     const prev = WD.monthKey(new Date(Y, M - 2, 1)), next = WD.monthKey(new Date(Y, M, 1));
@@ -287,8 +287,8 @@
     const legal = legalFor(target.id);
     const others = WD.activeUsers().filter((x) => x.id !== target.id);
     const opt = (sel = '') => others.map((o) => `<option value="${o.id}" ${o.id === sel ? 'selected' : ''}>${esc(o.name)} (${esc(o.title)})</option>`).join('');
-    const sameDept = others.find((o) => o.dept === target.dept && o.role === 'STAFF')?.id || others.find((o) => o.role === 'CEO')?.id;
-    const m = WD.ui.modal({ title: `퇴사 처리 · ${target.name} (${target.title}, ${target.dept})`, size: 'xl', okText: '퇴사 확정 · 즉시 접근 차단', danger: true,
+    const sameDept = others.find((o) => o.dept === target.dept && o.role === 'STAFF')?.id || others.find((o) => o.role === 'ADMIN')?.id;
+    const m = WD.ui.modal({ title: `계정 비활성화(퇴사 처리) · ${target.name} (${target.title || ''}, ${target.dept})`, size: 'xl', okText: '비활성화 확정 · 모든 세션 즉시 만료', danger: true,
       body: `<div class="wizard">
         <section><h4><span class="wz-n">1</span> 미결 서류·진행 중 문서 인계/이관</h4>
           ${pend.docs.length ? `<div class="row gap-s center mb-s"><span class="muted">일괄 인수자</span><select data-bulk>${opt(sameDept)}</select><button type="button" class="btn sm ghost" data-bulk-apply>모두 적용 + 인계 확인</button></div>
@@ -307,7 +307,7 @@
           <ul class="auto-list">
             <li>${I('lock')} <b>즉시 로그인 차단</b> — 계정 상태 RESIGNED, 활성 세션 <b>${WD.db.sessions.filter((s) => s.userId === target.id && !s.revokedAt).length}개</b> 즉시 만료(다른 기기·탭 포함 4초 내 강제 로그아웃)</li>
             <li>${I('users')} <b>권한 회수</b> — 폴더 접근·문서 공유 대상·발송 프리셋에서 제거</li>
-            <li>${I('vault')} <b>법정 보관 DB 이관 (대표 전용, 일반 영역에서 분리)</b>
+            <li>${I('vault')} <b>법정 보관 DB 이관 (최고 관리자 전용, 일반 영역에서 분리)</b>
               <ul><li>계약서 ${legal.contracts.length}건 · ${RETAIN.contract[1]}</li><li>근태 기록 ${legal.attendance.length}건 · ${RETAIN.attendance[1]}</li><li>승인된 회계·정산 문서 ${legal.acc.length}건 · ${RETAIN.accounting[1]}</li><li>인사기록·제출서류 ${legal.hr.length}건 · ${RETAIN.hrdoc[1]}</li></ul></li>
             <li>${I('audit')} <b>감사 로그</b> — 인수인계·퇴사 확정·세션 회수·보관 이관 내역 기록</li>
           </ul>
@@ -319,11 +319,11 @@
         const transfers = hos.map((c) => ({ docId: c.dataset.ho, to: w.querySelector(`[data-to="${c.dataset.ho}"]`).value }));
         const date = w.querySelector('[data-date]').value; const reason = w.querySelector('[data-reason]').value;
         const result = confirmResign(target, transfers, { date, reason });
-        setTimeout(() => WD.ui.modal({ title: '퇴사 처리 완료', hideOk: true, cancelText: '확인', body: `<ul class="auto-list done">
+        setTimeout(() => WD.ui.modal({ title: '계정 비활성화 완료', hideOk: true, cancelText: '확인', body: `<ul class="auto-list done">
           <li>${I('check')} 인수인계 ${result.handover}건 이관 완료</li><li>${I('lock')} ${esc(target.name)} 계정 로그인 차단 · 세션 ${result.sessions}개 즉시 회수</li>
           <li>${I('users')} 문서 공유 ${result.shares}건 · 발송 프리셋 ${result.presets}건에서 권한 제거</li>
           <li>${I('vault')} 법정 보관 DB 이관 ${result.vault}건 (계약 ${result.counts.contracts}, 근태 ${result.counts.attendance}, 회계 ${result.counts.acc}, 인사서류 ${result.counts.hr})</li></ul>
-          <p class="muted tiny">다른 탭에서 ${esc(target.loginId)} 계정으로 로그인해 두었다면 지금 자동 로그아웃되는 것을 확인할 수 있습니다.</p>` }), 50);
+          <p class="muted tiny">${esc(target.email || target.loginId)} 계정으로 열려 있던 화면은 즉시 강제 로그아웃되며, 이후 로그인 시도는 차단·기록됩니다.</p>` }), 50);
         WD.app.refresh();
       } });
     m.el.querySelector('[data-bulk-apply]')?.addEventListener('click', () => { const v = m.el.querySelector('[data-bulk]').value; m.el.querySelectorAll('[data-to]').forEach((s) => (s.value = v)); m.el.querySelectorAll('[data-ho]').forEach((c) => (c.checked = true)); });
@@ -331,7 +331,7 @@
 
   function confirmResign(target, transfers, { date, reason }) {
     const ceo = WD.auth.current();
-    if (ceo?.role !== 'CEO') throw new Error('대표만 퇴사 처리할 수 있습니다.');
+    if (ceo?.role !== 'ADMIN') throw new Error('최고 관리자만 계정을 비활성화할 수 있습니다.');
     const vaultRecs = []; const counts = {};
     const r = WD.tx((db) => {
       const out = { handover: 0, sessions: 0, shares: 0, presets: 0 };
@@ -387,16 +387,15 @@
     const vault = WD.vault._raw();
     const liveSessions = (uid) => db.sessions.filter((s) => s.userId === uid && !s.revokedAt && new Date(s.expiresAt) > new Date()).length;
     el.innerHTML = `<div class="page">
-      <div class="page-head"><div><h1>인사 · 퇴사 관리</h1><p class="muted">퇴사 처리 전 미결 서류·진행 문서의 인계/이관을 확인하고, 확정 즉시 로그인 차단·세션/권한 회수·법정 서류 보관 DB 이관을 한 번에 처리합니다.</p></div>
-        <button class="btn primary" data-add>${I('plus')} 직원 등록</button></div>
-      <div class="card flush"><div class="sub-head">${I('users')} 재직자 ${active.length}명</div><table class="tbl"><thead><tr><th>이름</th><th>권한</th><th>고용 유형</th><th>부서·직위</th><th>입사일</th><th class="c">활성 세션</th><th class="c">미결 문서</th><th class="r">작업</th></tr></thead><tbody>
-      ${active.map((x) => { const pd = pendingFor(x.id); return `<tr><td><div class="row gap-s center">${WD.ui.avatar(x, 28)}<b>${esc(x.name)}</b><small class="muted">${esc(x.loginId)}</small></div></td><td><span class="tag ${x.role === 'CEO' ? 'ok' : ''}">${x.role}</span></td><td>${esc(x.empType)}</td><td>${esc(x.dept)} · ${esc(x.title)}</td><td>${esc(x.joinedAt)}</td><td class="c">${liveSessions(x.id) ? `<span class="live-dot"></span>${liveSessions(x.id)}` : '0'}</td><td class="c">${pd.docs.length || '-'}</td>
-        <td class="r nowrap">${x.role !== 'CEO' ? `<button class="btn sm ghost" data-kick="${x.id}" title="모든 세션 강제 종료">세션 종료</button> <button class="btn sm danger" data-resign="${x.id}">퇴사 처리</button>` : '<span class="muted tiny">대표</span>'}</td></tr>`; }).join('')}
+      <div class="page-head"><div><h1>인사 · 계정 관리</h1><p class="muted">실장·직원 계정을 발급하고 권한을 관리합니다. 계정 비활성화(퇴사 처리) 시 해당 계정의 <b>모든 세션이 즉시 만료</b>되어 열려 있는 화면이 강제 로그아웃되고, 재로그인이 차단됩니다.</p></div>
+        <button class="btn primary" data-add>${I('plus')} 계정 등록</button></div>
+      <div class="card flush"><div class="sub-head">${I('users')} 활성 계정 ${active.length}명</div><table class="tbl"><thead><tr><th>이름</th><th>이메일</th><th>권한</th><th>고용 유형</th><th>부서·직함</th><th class="c">활성 세션</th><th class="c">미결 문서</th><th class="r">작업</th></tr></thead><tbody>
+      ${active.map((x) => { const pd = pendingFor(x.id); return `<tr><td><div class="row gap-s center">${WD.ui.avatar(x, 28)}<b>${esc(x.name)}</b></div></td><td class="muted">${esc(x.email || x.loginId)}</td><td><span class="tag ${x.role === 'ADMIN' ? 'ok' : x.role === 'MANAGER' ? 'lock' : ''}">${WD.ROLE_LABEL[x.role]}</span></td><td>${esc(x.empType)}</td><td>${esc(x.dept)} · ${esc(x.title || '')}</td><td class="c">${liveSessions(x.id) ? `<span class="live-dot"></span>${liveSessions(x.id)}` : '0'}</td><td class="c">${pd.docs.length || '-'}</td>
+        <td class="r nowrap">${x.role !== 'ADMIN' ? `<button class="btn sm ghost" data-edit="${x.id}">수정</button> <button class="btn sm ghost" data-pw="${x.id}">비밀번호 재설정</button> <button class="btn sm ghost" data-kick="${x.id}" title="모든 세션 강제 종료">세션 종료</button> <button class="btn sm danger" data-resign="${x.id}">비활성화(퇴사)</button>` : `<button class="btn sm ghost" data-pw="${x.id}">비밀번호 변경</button>`}</td></tr>`; }).join('')}
+      </tbody></table>${active.length > 1 ? '' : `<div class="pad muted">아직 실장·직원 계정이 없습니다. [계정 등록]으로 발급하세요.</div>`}</div>
+      <div class="card flush"><div class="sub-head">${I('lock')} 비활성 계정 (접근 차단) ${resigned.length}명</div><table class="tbl"><thead><tr><th>이름</th><th>이메일</th><th>이전 소속</th><th>비활성화 일시</th><th>로그인</th><th>보관 DB 기록</th><th></th></tr></thead><tbody>
+      ${resigned.map((x) => `<tr><td><b>${esc(x.name)}</b></td><td class="muted">${esc(x.email || x.loginId)}</td><td>${esc(x.dept)} · ${esc(x.empType)}</td><td>${WD.fmtDT(x.resignedAt)}</td><td><span class="badge st-revision">${I('lock', 'xs')} 차단됨</span></td><td>${vault.records.filter((r) => r.userId === x.id).length}건</td><td class="r"><a class="btn sm ghost" href="#/vault?u=${x.id}">보관 DB 보기</a></td></tr>`).join('') || `<tr><td colspan="7"><p class="muted pad">비활성 계정이 없습니다.</p></td></tr>`}
       </tbody></table></div>
-      <div class="card flush"><div class="sub-head">${I('lock')} 퇴사자 (접근 차단) ${resigned.length}명</div><table class="tbl"><thead><tr><th>이름</th><th>이전 소속</th><th>퇴사일</th><th>로그인</th><th>보관 DB 기록</th><th></th></tr></thead><tbody>
-      ${resigned.map((x) => `<tr><td><b>${esc(x.name)}</b> <small class="muted">${esc(x.loginId)}</small></td><td>${esc(x.dept)} · ${esc(x.empType)}</td><td>${WD.fmtDT(x.resignedAt)}</td><td><span class="badge st-revision">${I('lock', 'xs')} 차단됨</span></td><td>${vault.records.filter((r) => r.userId === x.id).length}건</td><td class="r"><a class="btn sm ghost" href="#/vault?u=${x.id}">보관 DB 보기</a></td></tr>`).join('') || `<tr><td colspan="6">${WD.ui.empty('퇴사자가 없습니다.')}</td></tr>`}
-      </tbody></table></div>
-      <div class="alert alert-info">${I('info')}<span><b>시연 팁</b> 다른 창(시크릿 창 X, 같은 브라우저의 새 탭)에서 <b>teacher3 (최은솔)</b>으로 로그인해 둔 뒤 여기서 [퇴사 처리]를 확정하면, 그 탭이 4초 안에 강제 로그아웃되고 재로그인이 차단됩니다.</span></div>
     </div>`;
     el.querySelectorAll('[data-resign]').forEach((b) => b.addEventListener('click', () => resignWizard(WD.user(b.dataset.resign))));
     el.querySelectorAll('[data-kick]').forEach((b) => b.addEventListener('click', async () => {
@@ -405,17 +404,44 @@
       WD.tx((d) => { const n = WD.auth.revokeAll(d, x.id, 'ADMIN'); WD.audit('SESSION_REVOKE', { type: 'user', id: x.id, name: x.name }, `관리자 강제 종료 ${n}개`); });
       WD.ui.toast('세션을 종료했습니다.'); WD.app.refresh();
     }));
-    el.querySelector('[data-add]').addEventListener('click', () => WD.ui.modal({ title: '직원 등록', okText: '등록',
-      body: `<div class="grid2"><label class="fld"><span>이름</span><input data-k="name"></label><label class="fld"><span>아이디</span><input data-k="loginId"></label>
-        <label class="fld"><span>고용 유형</span><select data-k="empType"><option>정규직</option><option>위촉강사</option></select></label><label class="fld"><span>부서</span><select data-k="dept"><option>교육팀</option><option>방과후팀</option><option>경영지원</option></select></label>
-        <label class="fld"><span>직위</span><input data-k="title" value="선생님"></label><label class="fld"><span>초기 비밀번호</span><input data-k="pw" value="1234"></label></div><p class="tiny muted">운영 버전: 첫 로그인 시 비밀번호 변경 + 2단계 인증(OTP) 강제</p>`,
+    el.querySelectorAll('[data-pw]').forEach((b) => b.addEventListener('click', () => {
+      const x = WD.user(b.dataset.pw);
+      WD.ui.modal({ title: `비밀번호 ${x.id === u.id ? '변경' : '재설정'} · ${x.name}`, okText: '저장',
+        body: `<label class="fld"><span>새 비밀번호 (8자 이상)</span><input type="password" data-p autocomplete="new-password"></label><label class="fld"><span>새 비밀번호 확인</span><input type="password" data-p2 autocomplete="new-password"></label>${x.id !== u.id ? '<p class="tiny muted">재설정하면 해당 계정의 기존 세션이 모두 만료됩니다.</p>' : ''}`,
+        onOk: async (w) => {
+          const pw = w.querySelector('[data-p]').value;
+          if (pw.length < 8) throw new Error('비밀번호는 8자 이상이어야 합니다.');
+          if (pw !== w.querySelector('[data-p2]').value) throw new Error('비밀번호가 서로 다릅니다.');
+          const h = await WD.sha256('wooridoori::' + pw);
+          WD.tx((d) => { const t = d.users.find((y) => y.id === x.id); t.pwHash = h; if (x.id !== u.id) WD.auth.revokeAll(d, x.id, 'ADMIN'); WD.audit('USER_CREATE', { type: 'user', id: x.id, name: x.name }, '비밀번호 변경/재설정'); });
+          WD.ui.toast('비밀번호를 저장했습니다.'); WD.app.refresh();
+        } });
+    }));
+    const form = (x = null) => WD.ui.modal({ title: x ? `계정 수정 · ${x.name}` : '계정 등록', okText: x ? '저장' : '등록', size: 'md',
+      body: `<div class="grid2"><label class="fld"><span>이름</span><input data-k="name" value="${esc(x?.name || '')}"></label><label class="fld"><span>이메일 (로그인 ID)</span><input type="email" data-k="email" value="${esc(x?.email || '')}" ${x ? 'disabled' : ''}></label>
+        <label class="fld"><span>권한</span><select data-k="role"><option value="STAFF" ${x?.role === 'STAFF' ? 'selected' : ''}>직원 — 작성·열람만</option><option value="MANAGER" ${x?.role === 'MANAGER' ? 'selected' : ''}>실장 — 작성·열람만 (관리자 전용 폴더 제외 전체)</option></select></label>
+        <label class="fld"><span>고용 유형</span><select data-k="empType">${['정규직', '위촉강사'].map((t) => `<option ${x?.empType === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+        <label class="fld"><span>부서</span><input data-k="dept" list="depts" value="${esc(x?.dept || '')}" placeholder="예) 교육팀"><datalist id="depts">${[...new Set(WD.db.users.map((y) => y.dept).filter(Boolean))].map((dp) => `<option>${esc(dp)}</option>`).join('')}</datalist></label>
+        <label class="fld"><span>직함</span><input data-k="title" value="${esc(x?.title || '')}" placeholder="예) 선생님, 실장"></label>
+        <label class="fld"><span>출근 기준</span><input type="time" data-k="workStart" value="${x?.workStart || '09:00'}"></label><label class="fld"><span>퇴근 기준</span><input type="time" data-k="workEnd" value="${x?.workEnd || '18:00'}"></label>
+        ${x ? '' : '<label class="fld full"><span>초기 비밀번호 (8자 이상)</span><input type="password" data-k="pw" autocomplete="new-password"></label>'}</div>
+        <p class="tiny muted">실장·직원은 문서 작성·열람만 가능하며 파일 다운로드·PDF/엑셀 내보내기·복사·인쇄가 차단됩니다.</p>`,
       onOk: async (w) => {
         const v = {}; w.querySelectorAll('[data-k]').forEach((i) => (v[i.dataset.k] = i.value.trim()));
-        if (!v.name || !v.loginId) throw new Error('이름과 아이디를 입력하세요.');
-        if (WD.db.users.some((x) => x.loginId === v.loginId)) throw new Error('이미 사용 중인 아이디입니다.');
+        if (!v.name) throw new Error('이름을 입력하세요.');
+        if (x) {
+          WD.tx((d) => { const t = d.users.find((y) => y.id === x.id); const before = t.role; Object.assign(t, { name: v.name, role: v.role, empType: v.empType, dept: v.dept, title: v.title, workStart: v.workStart, workEnd: v.workEnd }); WD.audit('USER_CREATE', { type: 'user', id: t.id, name: t.name }, `계정 수정${before !== v.role ? ` · 권한 ${WD.ROLE_LABEL[before]} → ${WD.ROLE_LABEL[v.role]}` : ''}`); });
+          WD.ui.toast('저장했습니다.'); WD.app.refresh(); return;
+        }
+        const email = v.email.toLowerCase();
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('올바른 이메일을 입력하세요.');
+        if (WD.db.users.some((y) => (y.email || '').toLowerCase() === email)) throw new Error('이미 등록된 이메일입니다.');
+        if ((v.pw || '').length < 8) throw new Error('초기 비밀번호는 8자 이상이어야 합니다.');
         const pwHash = await WD.sha256('wooridoori::' + v.pw);
-        WD.tx((d) => { const nu = { id: WD.uid('u'), loginId: v.loginId, name: v.name, role: 'STAFF', title: v.title, empType: v.empType, dept: v.dept, joinedAt: WD.ymd(), phone: '', workStart: v.empType === '정규직' ? '09:00' : '13:00', workEnd: '18:00', pwHash, status: 'ACTIVE', createdAt: WD.now() }; d.users.push(nu); WD.audit('USER_CREATE', { type: 'user', id: nu.id, name: nu.name }, `${nu.empType} · ${nu.dept}`); });
-        WD.ui.toast('직원을 등록했습니다.'); WD.app.refresh();
-      } }));
+        WD.tx((d) => { const nu = { id: WD.uid('u'), loginId: email, email, name: v.name, role: v.role, title: v.title || (v.role === 'MANAGER' ? '실장' : '선생님'), empType: v.empType, dept: v.dept || '미지정', joinedAt: WD.ymd(), phone: '', workStart: v.workStart || '09:00', workEnd: v.workEnd || '18:00', pwHash, status: 'ACTIVE', createdAt: WD.now() }; d.users.push(nu); WD.audit('USER_CREATE', { type: 'user', id: nu.id, name: nu.name }, `${WD.ROLE_LABEL[nu.role]} · ${nu.empType} · ${nu.dept}`); });
+        WD.ui.toast('계정을 등록했습니다. 이메일과 초기 비밀번호를 본인에게 전달하세요.'); WD.app.refresh();
+      } });
+    el.querySelector('[data-add]').addEventListener('click', () => form());
+    el.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => form(WD.user(b.dataset.edit))));
   };
 })();
