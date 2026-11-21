@@ -70,14 +70,28 @@
   }
 
   /** 새 기능 테이블 보강 (기존 데이터 유지) */
-  const ensure = (db) => { let ch = false; ['contractTemplates', 'messages', 'notices', 'rooms'].forEach((k) => { if (!Array.isArray(db[k])) { db[k] = []; ch = true; } }); return ch; };
+  // 원클릭 런처 기본 바로가기 (우리두리 공식 채널)
+  const DEFAULT_LAUNCHERS = [
+    { name: '우리두리 블로그', url: 'https://blog.naver.com/wooriduri1004', category: '홍보', color: '#03c75a' },
+    { name: '우리두리 인스타그램', url: 'https://www.instagram.com/wooriduri.center/', category: '홍보', color: '#d6249f' },
+  ];
+  const norm = (u) => String(u || '').trim().replace(/\/+$/, '').toLowerCase();
+  const ensure = (db) => {
+    let ch = false;
+    ['contractTemplates', 'messages', 'notices', 'rooms', 'launchers'].forEach((k) => { if (!Array.isArray(db[k])) { db[k] = []; ch = true; } });
+    if (!db.launcherDefaults1) { // 한 번만 추가 (나중에 지우면 다시 생기지 않음)
+      DEFAULT_LAUNCHERS.slice().reverse().forEach((l) => { if (!db.launchers.some((x) => norm(x.url) === norm(l.url))) db.launchers.unshift({ id: WD.uid('l'), ...l }); });
+      db.launcherDefaults1 = true; ch = true;
+    }
+    return ch;
+  };
 
   WD.seedIfEmpty = async () => {
     WD.load();
     if (WD.db && WD.db.schemaVersion === SCHEMA_VERSION) { if (ensure(WD.db)) WD.save(); return false; }
     if (WD.db && WD.db.schemaVersion === 5) { WD.db = migrate5(WD.db); ensure(WD.db); WD.save(); return true; }
     const hadOld = !!WD.db;
-    WD.db = emptyDb(); WD.save();
+    WD.db = emptyDb(); ensure(WD.db); WD.save();
     localStorage.setItem(WD.VAULT_KEY, JSON.stringify({ records: [] }));
     if (hadOld) { try { await WD.files.clear(); } catch (e) { /* noop */ } sessionStorage.removeItem('wd_sid'); }
     return true;
