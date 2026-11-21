@@ -9,9 +9,16 @@
 
   /* ---------------- 알림함 · 메시지 (직원들과 소통 창구) ---------------- */
   function renderMessages(el, query, u, tabsHTML) {
-    const convs = WD.api.messages.conversations();
+    let convs = WD.api.messages.conversations();
     const peer = query.with || (convs.find((c) => c.unread)?.id) || 'ALL';
+    WD.api.messages.markRead(peer); // 열자마자 읽음 처리 후 목록 계산
+    convs = WD.api.messages.conversations();
     const cur = convs.find((c) => c.id === peer) || convs[0];
+    const listHTML = (cs) => cs.map((c) => `<a class="conv ${c.id === cur.id ? 'active' : ''} ${c.inactive ? 'inactive' : ''}" href="#/inbox?tab=msg&with=${c.id}">
+          ${c.all ? `<span class="avatar all-room">${WD.icon('megaphone')}</span>` : WD.ui.avatar(WD.user(c.id), 36)}
+          <span class="conv-body"><span class="conv-top"><b>${esc(c.name)}</b>${c.role ? WD.roleBadge(c.role) : ''}${c.inactive ? '<small class="muted">비활성</small>' : ''}<time>${c.last ? fmtT(c.last.at) : ''}</time></span>
+          <small>${c.last ? esc((c.last.from === u.id ? '나: ' : '') + (c.last.text || '📎 문서')) : '대화 없음'}</small></span>
+          ${c.unread ? `<em class="conv-unread">${c.unread}</em>` : ''}</a>`).join('');
     const docs = WD.api.documents.visible().slice().sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)).slice(0, 50);
     const fmtT = (iso) => { const d = new Date(iso); const today = WD.ymd() === WD.ymd(d); return today ? `${WD.pad(d.getHours())}:${WD.pad(d.getMinutes())}` : `${d.getMonth() + 1}/${d.getDate()}`; };
     const bubble = (m) => {
@@ -29,11 +36,8 @@
       <div class="page-head simple"><div><h1>알림함</h1><p class="muted">직원들과 메시지로 바로 소통하고, 문서를 함께 보낼 수 있어요.</p></div></div>
       ${tabsHTML}
       <div class="chat card flush">
-        <aside class="chat-list">${convs.map((c) => `<a class="conv ${c.id === cur.id ? 'active' : ''} ${c.inactive ? 'inactive' : ''}" href="#/inbox?tab=msg&with=${c.id}">
-          ${c.all ? `<span class="avatar all-room">${WD.icon('megaphone')}</span>` : WD.ui.avatar(WD.user(c.id), 36)}
-          <span class="conv-body"><span class="conv-top"><b>${esc(c.name)}</b>${c.role ? WD.roleBadge(c.role) : ''}${c.inactive ? '<small class="muted">비활성</small>' : ''}<time>${c.last ? fmtT(c.last.at) : ''}</time></span>
-          <small>${c.last ? esc((c.last.from === u.id ? '나: ' : '') + (c.last.text || '📎 문서')) : '대화 없음'}</small></span>
-          ${c.unread ? `<em class="conv-unread">${c.unread}</em>` : ''}</a>`).join('')}</aside>
+        <aside class="chat-list" id="chat-list">${listHTML(convs)}</aside>
+        
         <section class="chat-main">
           <div class="chat-head">${cur.all ? `<span class="avatar all-room">${WD.icon('megaphone')}</span><b>전체 공지방</b><small class="muted">활성 직원 전체가 함께 보는 방</small>` : `${WD.ui.avatar(WD.user(cur.id), 32)}<b>${esc(cur.name)}</b>${cur.role ? WD.roleBadge(cur.role) : ''}`}</div>
           <div class="chat-thread" id="chat-thread">${threadHTML()}</div>
@@ -60,10 +64,13 @@
     }
     // 새 메시지 자동 반영 (같은 브라우저의 다른 탭·주기 확인)
     let lastSig = JSON.stringify(WD.api.messages.thread(cur.id).map((m) => [m.id, (m.readBy || []).length]));
+    let lastList = '';
     const poll = () => {
       if (!thread.isConnected) return;
       WD.load();
       const sig = JSON.stringify(WD.api.messages.thread(cur.id).map((m) => [m.id, (m.readBy || []).length]));
+      const cs = WD.api.messages.conversations(); const lsig = JSON.stringify(cs.map((c) => [c.id, c.unread, c.last?.id]));
+      if (lsig !== lastList) { lastList = lsig; const L = el.querySelector('#chat-list'); if (L) L.innerHTML = listHTML(cs); }
       if (sig !== lastSig) { lastSig = sig; const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80; thread.innerHTML = threadHTML(); if (atBottom) scrollEnd(); WD.api.messages.markRead(cur.id); }
     };
     const iv = setInterval(poll, 2500);
