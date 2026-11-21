@@ -386,6 +386,11 @@ body.shield .protected { filter: blur(14px) grayscale(1); transition: none; }
 .hwp-shell { display: flex; flex-direction: column; height: 100%; }
 .hwp-status { padding: 8px 14px; font-size: 12.5px; color: var(--ink2); background: #f3f7fb; border-bottom: 1px solid var(--line); display: flex; gap: 6px; align-items: center; }
 .hwp-host { flex: 1; min-height: 0; }
+.hwp-tools { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; padding: 6px 8px; background: #2b2f36; border-bottom: 1px solid #1d2026; }
+.hwp-tools button { border: 1px solid #41464f; background: #353a43; color: #e8ecf1; border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; min-width: 30px; }
+.hwp-tools button:hover { background: #46505c; border-color: #5b6573; }
+.hwp-tools .sep { width: 1px; height: 20px; background: #4a505a; margin: 0 4px; }
+.hwp-tools-note { margin-left: auto; color: #f3c46b; font-size: 11.5px; }
 .hwp-host iframe { border: 0; display: block; }
 
 /* 파일 뷰어 */
