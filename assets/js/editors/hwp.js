@@ -29,7 +29,7 @@
       let editor = null;
       const isCEO = u?.role === 'CEO';
       if ((!isCEO || readOnly) && typeof mod.createStudio === 'function') {
-        try { editor = await withTimeout(mod.createStudio(host, { chrome: { menu: false, statusbar: true } }), 25000, 'studio 초기화 시간 초과'); }
+        try { editor = await withTimeout(mod.createStudio(host, { chrome: { menu: false, toolbar: !readOnly, statusbar: true } }), 25000, 'studio 초기화 시간 초과'); }
         catch (e) { console.warn('createStudio 실패 → createEditor 사용', e); host.innerHTML = ''; editor = null; }
       }
       if (!editor) editor = await withTimeout(mod.createEditor(host, { width: '100%', height: '100%' }), 30000, '에디터 초기화 시간 초과');
