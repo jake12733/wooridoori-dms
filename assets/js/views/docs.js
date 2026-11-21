@@ -349,7 +349,7 @@
         </div>
       </div>
       ${d.status === 'REVISION_REQUIRED' && lastRev ? `<div class="alert alert-warn">${I('alert')}<span><b>보완 요청</b> (${esc(WD.userName(lastRev.actorId))}, ${WD.fmtDT(lastRev.at)}) — ${esc(lastRev.reason)}<br><small>내용을 수정해 새 버전으로 저장한 뒤 [재제출]하세요.</small></span></div>` : ''}
-      ${!canExport ? `<div class="alert alert-info slim">${I('lock')}<span>웹 열람전용 문서입니다. 다운로드·복사·인쇄·우클릭은 막혀 있고, 화면에 이름·직급·아이디·접속 시간이 표시됩니다.</span></div>` : ''}
+      ${!canExport ? `<div class="alert alert-info slim">${I('lock')}<span>웹 열람전용 문서입니다. 다운로드·복사·인쇄·우클릭이 막혀 있습니다.</span></div>` : ''}
       <div class="doc-body">
         <div class="office office-${d.kind}">
           <div class="ribbon">

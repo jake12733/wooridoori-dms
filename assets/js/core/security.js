@@ -150,6 +150,7 @@
 
     /** 워터마크 오버레이 (반투명, 현재 시간 실시간 갱신, 제거 시 자동 복원) */
     watermark(el, opts = {}) {
+      return; // 요청에 따라 화면 워터마크(이름·이메일·시간 표시) 사용 안 함 — 다운로드·복사·인쇄·우클릭 차단은 그대로 유지
       const u = WD.auth.currentRaw(); if (!el || !u) return;
       let url = sec.watermarkImage(u, opts.label);
       // opts.full: 화면(뷰포트) 배경 전체를 덮는 고정 워터마크
