@@ -54,7 +54,7 @@
 
   function badgeCounts(u) {
     const db = WD.db;
-    const inbox = db.notifications.filter((n) => n.userId === u.id && !n.read).length;
+    const inbox = db.notifications.filter((n) => n.userId === u.id && !n.read).length + WD.api.messages.unreadCount();
     const wf = WD.isTop(u) ? db.documents.filter((d) => ['PENDING', 'RESUBMITTED'].includes(d.status)).length : 0;
     const contract = WD.isTop(u)
       ? WD.wf.expiryAlerts().filter((a) => a.kind === '계약 종료' && !a.renewed).length + db.contracts.filter((c) => c.status === 'SIGNED').length
@@ -256,6 +256,14 @@
     }
     WD.sec.installGuards();
     WD.auth.watch();
+    // 알림함 배지(알림+메시지) 실시간 갱신
+    setInterval(() => {
+      const u = WD.auth.currentRaw(); if (!u || !WD.db) return;
+      const n = WD.db.notifications.filter((x) => x.userId === u.id && !x.read).length + WD.api.messages.unreadCount();
+      const a = document.querySelector('.nav-item[href="#/inbox"]'); if (!a) return;
+      let em = a.querySelector('.nav-badge');
+      if (n) { if (!em) { em = document.createElement('em'); em.className = 'nav-badge'; a.appendChild(em); } em.textContent = n; } else if (em) em.remove();
+    }, 3000);
     window.addEventListener('hashchange', route);
     route();
   }

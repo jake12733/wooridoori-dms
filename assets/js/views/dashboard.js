@@ -33,6 +33,72 @@
     WD.app.onCleanup(() => ch.destroy());
   }
 
+  /* ---------------- 공지사항 (대표·관리자 작성·수정 / 전 직원 열람) ---------------- */
+  const noticeList = () => (WD.db.notices || []).slice().sort((a, b) => (b.pinned - a.pinned) || ((b.updatedAt || b.createdAt) > (a.updatedAt || a.createdAt) ? 1 : -1));
+  const isNew = (n) => Date.now() - new Date(n.updatedAt || n.createdAt) < 3 * 864e5;
+
+  WD.noticeBoardHTML = (u, { manage = false, limit = 0 } = {}) => {
+    const list = noticeList(); const shown = limit ? list.slice(0, limit) : list;
+    return `<section class="card notice-card ${manage ? 'manage' : 'compact'}">
+      <div class="card-head"><h3>${I('megaphone')} 공지사항 <em class="cnt">${list.length}</em></h3>
+        ${manage ? `<button class="btn sm primary" data-notice-new>${I('plus')} 공지 작성</button>` : (list.length > shown.length ? `<button class="btn sm ghost" data-notice-all>전체 보기</button>` : '')}</div>
+      ${shown.length ? `<ul class="notice-list">${shown.map((n) => `<li class="${n.pinned ? 'pinned' : ''}">
+        <button class="notice-row" data-notice-open="${n.id}">${n.pinned ? '<span class="pin">📌 고정</span>' : ''}<b>${esc(n.title)}</b>${isNew(n) ? '<span class="new">NEW</span>' : ''}
+          <small>${esc(WD.userName(n.authorId))} · ${WD.fmtDT(n.updatedAt || n.createdAt)}${n.updatedAt && n.updatedAt !== n.createdAt ? ' (수정됨)' : ''}</small></button>
+        ${manage ? `<span class="notice-act"><button class="btn sm ghost" data-notice-edit="${n.id}">수정</button><button class="btn sm ghost icon-only" data-notice-del="${n.id}" title="삭제">${I('trash')}</button></span>` : ''}
+      </li>`).join('')}</ul>` : `<p class="muted">${manage ? '아직 공지가 없습니다. [공지 작성]으로 직원들에게 알릴 내용을 올려 보세요.' : '등록된 공지가 없습니다.'}</p>`}
+    </section>`;
+  };
+
+  function noticeForm(n = null) {
+    WD.ui.modal({ title: n ? '공지 수정' : '공지 작성', okText: n ? '수정 저장' : '공지 올리기', size: 'md',
+      body: `<label class="fld"><span>제목</span><input data-k="title" value="${esc(n?.title || '')}" placeholder="예) 12월 동절기 운영 시간 안내"></label>
+        <label class="fld"><span>내용</span><textarea data-k="body" rows="9" placeholder="직원들에게 알릴 내용을 적어 주세요.">${esc(n?.body || '')}</textarea></label>
+        <label class="chk"><input type="checkbox" data-k="pinned" ${n?.pinned ? 'checked' : ''}> 📌 맨 위에 고정</label>
+        ${n ? '' : '<label class="chk"><input type="checkbox" data-k="notify" checked> 전 직원 알림함에 알림 보내기</label>'}`,
+      onOk: (w) => {
+        WD.blockPreview();
+        const title = w.querySelector('[data-k=title]').value.trim(); const body = w.querySelector('[data-k=body]').value.trim();
+        if (!title) throw new Error('제목을 입력하세요.');
+        const pinned = w.querySelector('[data-k=pinned]').checked; const notify = w.querySelector('[data-k=notify]')?.checked;
+        const u = WD.auth.current();
+        if (!WD.isTop(u)) throw new Error('공지는 대표·관리자만 작성할 수 있습니다.');
+        WD.tx((db) => {
+          db.notices = db.notices || [];
+          if (n) { const t = db.notices.find((x) => x.id === n.id); Object.assign(t, { title, body, pinned, updatedAt: WD.now(), editorId: u.id }); WD.audit('TEMPLATE_SAVE', { type: 'notice', id: t.id, name: title }, '공지 수정'); }
+          else {
+            const t = { id: WD.uid('ntc'), title, body, pinned, authorId: u.id, createdAt: WD.now(), updatedAt: WD.now() };
+            db.notices.push(t); WD.audit('TEMPLATE_SAVE', { type: 'notice', id: t.id, name: title }, '공지 작성');
+            if (notify) db.users.filter((x) => x.status === 'ACTIVE' && x.id !== u.id).forEach((x) => WD.notify(x.id, { title: `📢 공지: ${title}`, body: body.slice(0, 80), link: '#/docs?notice=' + t.id, type: 'INFO' }));
+          }
+        });
+        WD.ui.toast(n ? '공지를 수정했습니다.' : '공지를 올렸습니다.'); WD.app.refresh();
+      } });
+  }
+
+  function openNotice(n, manage) {
+    const m = WD.ui.modal({ title: n.title, size: 'md', hideOk: !manage, okText: '수정', cancelText: '닫기',
+      body: `<div class="notice-view"><div class="muted tiny">${n.pinned ? '📌 고정 · ' : ''}${esc(WD.userName(n.authorId))} · ${WD.fmtDT(n.createdAt)}${n.updatedAt !== n.createdAt ? ` · 수정 ${WD.fmtDT(n.updatedAt)}` : ''}</div><div class="notice-body">${esc(n.body || '').replace(/\n/g, '<br>') || '<span class="muted">(내용 없음)</span>'}</div></div>`,
+      onOk: () => { setTimeout(() => noticeForm(n), 0); } });
+    return m;
+  }
+
+  WD.bindNotices = (el, u) => {
+    const manage = WD.isTop(u);
+    const N = (id) => (WD.db.notices || []).find((x) => x.id === id);
+    el.querySelector('[data-notice-new]')?.addEventListener('click', () => noticeForm());
+    el.querySelectorAll('[data-notice-open]').forEach((b) => b.addEventListener('click', () => openNotice(N(b.dataset.noticeOpen), manage)));
+    el.querySelectorAll('[data-notice-edit]').forEach((b) => b.addEventListener('click', () => noticeForm(N(b.dataset.noticeEdit))));
+    el.querySelectorAll('[data-notice-del]').forEach((b) => b.addEventListener('click', async () => {
+      const n = N(b.dataset.noticeDel);
+      if (!(await WD.ui.confirm('공지 삭제', `'${n.title}' 공지를 삭제할까요?`, { danger: true }))) return;
+      WD.tx((db) => { db.notices = db.notices.filter((x) => x.id !== n.id); WD.audit('TEMPLATE_DELETE', { type: 'notice', id: n.id, name: n.title }, '공지 삭제'); });
+      WD.app.refresh();
+    }));
+    el.querySelector('[data-notice-all]')?.addEventListener('click', () => WD.ui.modal({ title: '공지사항 전체', size: 'md', hideOk: true, cancelText: '닫기', body: `<ul class="notice-list">${noticeList().map((n) => `<li><button class="notice-row" data-nall="${n.id}">${n.pinned ? '<span class="pin">📌</span>' : ''}<b>${esc(n.title)}</b><small>${WD.fmtDT(n.updatedAt || n.createdAt)}</small></button></li>`).join('')}</ul>` }).el.querySelectorAll('[data-nall]').forEach((b) => b.addEventListener('click', () => openNotice(N(b.dataset.nall), manage))));
+  };
+  WD.openNoticeById = (id, u) => { const n = (WD.db.notices || []).find((x) => x.id === id); if (n) openNotice(n, WD.isTop(u)); };
+
   V.dashboard = async (el, p, q, u) => (WD.isTop(u) ? ceoDash(el, u) : staffDash(el, u));
 
   function ceoDash(el, u) {
@@ -62,6 +128,7 @@
         <div class="kpi big ${cur.net >= 0 ? 'ok' : 'danger'}"><small>${+month.slice(5)}월 순수익</small><b>${short(cur.net)}원</b><span class="muted">이익률 ${cur.rev ? Math.round((cur.net / cur.rev) * 100) : 0}%</span></div>
         <div class="kpi big"><small>최근 ${fin.length}개월 누적 순수익</small><b>${short(half.rev - half.exp)}원</b><span class="muted">매출 ${short(half.rev)} · 지출 ${short(half.exp)}</span></div>
       </div>
+      ${WD.noticeBoardHTML(u, { manage: true })}
       <div class="dash-grid">
         <section class="card span2"><div class="card-head"><h3>${I('chart')} 매출 · 지출 · 순수익 추이</h3><a href="#/finance" class="link">상세</a></div><div class="chart-box"><canvas id="fin-chart"></canvas></div></section>
         <section class="card"><div class="card-head"><h3>${I('flow')} 결재 대기 <em class="cnt">${waiting.length}</em></h3><a href="#/workflow" class="link">전체</a></div>
@@ -82,6 +149,7 @@
           <ul class="mini-list compact">${logs.map((l) => `<li><small class="muted">${WD.fmtDT(l.at)}</small><span><b>${esc(l.userName)}</b> ${esc(WD.AUDIT_LABEL[l.action] || l.action)}</span><small>${esc(l.targetName)}</small></li>`).join('')}</ul></section>
       </div></div>`;
     drawChart(el.querySelector('#fin-chart'), fin);
+    WD.bindNotices(el, u);
   }
 
   function staffDash(el, u) {

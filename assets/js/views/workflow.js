@@ -7,11 +7,76 @@
   const I = (n, c) => WD.icon(n, c);
   const esc = WD.esc;
 
+  /* ---------------- 알림함 · 메시지 (직원들과 소통 창구) ---------------- */
+  function renderMessages(el, query, u, tabsHTML) {
+    const convs = WD.api.messages.conversations();
+    const peer = query.with || (convs.find((c) => c.unread)?.id) || 'ALL';
+    const cur = convs.find((c) => c.id === peer) || convs[0];
+    const docs = WD.api.documents.visible().slice().sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)).slice(0, 50);
+    const fmtT = (iso) => { const d = new Date(iso); const today = WD.ymd() === WD.ymd(d); return today ? `${WD.pad(d.getHours())}:${WD.pad(d.getMinutes())}` : `${d.getMonth() + 1}/${d.getDate()}`; };
+    const bubble = (m) => {
+      const mine = m.from === u.id; const s = WD.user(m.from);
+      const doc = m.docId ? WD.doc(m.docId) : null;
+      const d = new Date(m.at);
+      return `<div class="msg ${mine ? 'mine' : ''}">
+        ${mine ? '' : WD.ui.avatar(s || { id: m.from, name: '?' }, 30)}
+        <div class="msg-col">${mine ? '' : `<div class="msg-from"><b>${esc(s?.name || '(삭제된 사용자)')}</b>${s ? WD.roleBadge(WD.effectiveRole(s)) : ''}</div>`}
+          <div class="msg-bubble">${esc(m.text).replace(/\n/g, '<br>')}${m.docId ? `<a class="msg-doc" href="#/doc/${m.docId}">${doc ? WD.ui.kindIcon(doc.kind) : WD.icon('file')}<span>${esc(doc?.title || '(열람할 수 없는 문서)')}</span></a>` : ''}</div>
+          <time>${WD.ymd(d).slice(5).replace('-', '/')} ${WD.pad(d.getHours())}:${WD.pad(d.getMinutes())}${mine && peer !== 'ALL' ? ` · ${(m.readBy || []).includes(peer) ? '읽음' : '안 읽음'}` : ''}</time></div></div>`;
+    };
+    const threadHTML = () => { const th = WD.api.messages.thread(cur.id); return th.length ? th.map(bubble).join('') : `<div class="msg-empty">${WD.icon('send')}<p>${cur.all ? '전체 직원에게 보내는 공지방입니다. 첫 메시지를 남겨 보세요.' : `${esc(cur.name)}님과의 대화를 시작해 보세요.`}</p></div>`; };
+    el.innerHTML = `<div class="page">
+      <div class="page-head simple"><div><h1>알림함</h1><p class="muted">직원들과 메시지로 바로 소통하고, 문서를 함께 보낼 수 있어요.</p></div></div>
+      ${tabsHTML}
+      <div class="chat card flush">
+        <aside class="chat-list">${convs.map((c) => `<a class="conv ${c.id === cur.id ? 'active' : ''} ${c.inactive ? 'inactive' : ''}" href="#/inbox?tab=msg&with=${c.id}">
+          ${c.all ? `<span class="avatar all-room">${WD.icon('megaphone')}</span>` : WD.ui.avatar(WD.user(c.id), 36)}
+          <span class="conv-body"><span class="conv-top"><b>${esc(c.name)}</b>${c.role ? WD.roleBadge(c.role) : ''}${c.inactive ? '<small class="muted">비활성</small>' : ''}<time>${c.last ? fmtT(c.last.at) : ''}</time></span>
+          <small>${c.last ? esc((c.last.from === u.id ? '나: ' : '') + (c.last.text || '📎 문서')) : '대화 없음'}</small></span>
+          ${c.unread ? `<em class="conv-unread">${c.unread}</em>` : ''}</a>`).join('')}</aside>
+        <section class="chat-main">
+          <div class="chat-head">${cur.all ? `<span class="avatar all-room">${WD.icon('megaphone')}</span><b>전체 공지방</b><small class="muted">활성 직원 전체가 함께 보는 방</small>` : `${WD.ui.avatar(WD.user(cur.id), 32)}<b>${esc(cur.name)}</b>${cur.role ? WD.roleBadge(cur.role) : ''}`}</div>
+          <div class="chat-thread" id="chat-thread">${threadHTML()}</div>
+          ${cur.inactive ? '<div class="chat-input"><p class="muted">비활성화된 계정이라 메시지를 보낼 수 없습니다.</p></div>' : `<form class="chat-input" id="chat-form">
+            <select id="chat-doc" title="문서 함께 보내기"><option value="">📎 문서 첨부 안 함</option>${docs.map((d) => `<option value="${d.id}">${esc(d.title)}</option>`).join('')}</select>
+            <textarea id="chat-text" rows="2" placeholder="메시지를 입력하세요 (Enter 보내기 · Shift+Enter 줄바꿈)"></textarea>
+            <button class="btn primary" type="submit">${WD.icon('send')} 보내기</button></form>`}
+        </section>
+      </div></div>`;
+    const thread = el.querySelector('#chat-thread');
+    const scrollEnd = () => { thread.scrollTop = thread.scrollHeight; };
+    scrollEnd();
+    WD.api.messages.markRead(cur.id);
+    const form = el.querySelector('#chat-form');
+    if (form) {
+      const ta = el.querySelector('#chat-text');
+      const send = () => {
+        try { WD.api.messages.send(cur.id, ta.value, el.querySelector('#chat-doc').value || null); ta.value = ''; el.querySelector('#chat-doc').value = ''; thread.innerHTML = threadHTML(); scrollEnd(); }
+        catch (e) { WD.ui.toast(e.message, 'warn'); }
+      };
+      form.addEventListener('submit', (e) => { e.preventDefault(); send(); });
+      ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+      setTimeout(() => ta.focus(), 50);
+    }
+    // 새 메시지 자동 반영 (같은 브라우저의 다른 탭·주기 확인)
+    let lastSig = JSON.stringify(WD.api.messages.thread(cur.id).map((m) => [m.id, (m.readBy || []).length]));
+    const poll = () => {
+      if (!thread.isConnected) return;
+      WD.load();
+      const sig = JSON.stringify(WD.api.messages.thread(cur.id).map((m) => [m.id, (m.readBy || []).length]));
+      if (sig !== lastSig) { lastSig = sig; const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80; thread.innerHTML = threadHTML(); if (atBottom) scrollEnd(); WD.api.messages.markRead(cur.id); }
+    };
+    const iv = setInterval(poll, 2500);
+    const onStorage = (e) => { if (e.key === WD.DB_KEY) poll(); };
+    window.addEventListener('storage', onStorage);
+    WD.app.onCleanup(() => { clearInterval(iv); window.removeEventListener('storage', onStorage); });
+  }
+
   /* ---------------- 알림함: 발송 이력 (누가 · 누구에게 · 어떤 문서 · 몇 시) ---------------- */
   V.inbox = (el, p, query, u) => {
     const db = WD.db;
     const isTop = WD.isTop(u);
-    const tab = query.tab || 'in';
+    const tab = query.tab || 'msg';
     const recv = db.dispatches.filter((x) => (x.targets || []).includes(u.id));
     const sent = db.dispatches.filter((x) => x.senderId === u.id);
     const all = isTop ? db.dispatches : [];
@@ -42,15 +107,18 @@
         <time class="sr-time"><b>${WD.ymd(dt).slice(5).replace('-', '.')}</b> ${WD.pad(dt.getHours())}:${WD.pad(dt.getMinutes())}<small>${WD.ymd(dt).slice(0, 4)}</small></time>
       </a></li>`;
     };
-    el.innerHTML = `<div class="page">
-      <div class="page-head simple"><div><h1>알림함</h1><p class="muted">누가 · 누구에게 · 어떤 문서를 · 몇 시에 보냈는지 한눈에 봅니다. 줄을 누르면 문서가 열려요.</p></div>
-        <button class="btn ghost" data-readall>${I('check')} 모두 읽음</button></div>
-      <div class="tabs big">
-        <a class="tab ${tab === 'in' ? 'active' : ''}" href="#/inbox">받은 문서 <em>${recv.length}</em></a>
+    const tabsHTML = `<div class="tabs big">
+        <a class="tab ${tab === 'msg' ? 'active' : ''}" href="#/inbox?tab=msg">💬 메시지 <em>${WD.api.messages.unreadCount()}</em></a>
+        <a class="tab ${tab === 'in' ? 'active' : ''}" href="#/inbox?tab=in">받은 문서 <em>${recv.length}</em></a>
         <a class="tab ${tab === 'sent' ? 'active' : ''}" href="#/inbox?tab=sent">보낸 문서 <em>${sent.length}</em></a>
         ${isTop ? `<a class="tab ${tab === 'all' ? 'active' : ''}" href="#/inbox?tab=all">전체 발송 이력 <em>${all.length}</em></a>` : ''}
         <a class="tab ${tab === 'note' ? 'active' : ''}" href="#/inbox?tab=note">기타 알림 <em>${notes.filter((n) => !n.read).length}</em></a>
-      </div>
+      </div>`;
+    if (tab === 'msg') { renderMessages(el, query, u, tabsHTML); return; }
+    el.innerHTML = `<div class="page">
+      <div class="page-head simple"><div><h1>알림함</h1><p class="muted">누가 · 누구에게 · 어떤 문서를 · 몇 시에 보냈는지 한눈에 봅니다. 줄을 누르면 문서가 열려요.</p></div>
+        <button class="btn ghost" data-readall>${I('check')} 모두 읽음</button></div>
+      ${tabsHTML}
       <div class="card flush">
         ${tab === 'note'
           ? (notes.length ? `<ul class="inbox">${notes.map((n) => `<li class="${n.read ? '' : 'unread'}"><a href="${n.link || '#/inbox'}" data-n="${n.id}"><span class="ibody"><b>${esc(n.title)}</b><small>${esc(n.body)}</small></span><time>${WD.fmtDT(n.at)}</time></a></li>`).join('')}</ul>` : WD.ui.empty('알림이 없습니다.'))

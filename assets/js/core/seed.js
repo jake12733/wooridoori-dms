@@ -36,7 +36,7 @@
         { id: 'p_ceo', name: '대표에게 결재·제출', action: 'SUBMIT_CEO', icon: 'stamp' },
         { id: 'p_all', name: '전체 직원 공지 발송', action: 'BROADCAST', icon: 'megaphone' },
       ],
-      notifications: [], templates: [], checklistSets: checklistSets(), submissions: [], contracts: [], attendance: [], finance: [], launchers: [], auditLogs: [], alertSent: [],
+      notifications: [], templates: [], contractTemplates: [], messages: [], notices: [], checklistSets: checklistSets(), submissions: [], contracts: [], attendance: [], finance: [], launchers: [], auditLogs: [], alertSent: [],
     };
   }
 
@@ -69,10 +69,13 @@
     return db;
   }
 
+  /** 새 기능 테이블 보강 (기존 데이터 유지) */
+  const ensure = (db) => { let ch = false; ['contractTemplates', 'messages', 'notices'].forEach((k) => { if (!Array.isArray(db[k])) { db[k] = []; ch = true; } }); return ch; };
+
   WD.seedIfEmpty = async () => {
     WD.load();
-    if (WD.db && WD.db.schemaVersion === SCHEMA_VERSION) return false;
-    if (WD.db && WD.db.schemaVersion === 5) { WD.db = migrate5(WD.db); WD.save(); return true; }
+    if (WD.db && WD.db.schemaVersion === SCHEMA_VERSION) { if (ensure(WD.db)) WD.save(); return false; }
+    if (WD.db && WD.db.schemaVersion === 5) { WD.db = migrate5(WD.db); ensure(WD.db); WD.save(); return true; }
     const hadOld = !!WD.db;
     WD.db = emptyDb(); WD.save();
     localStorage.setItem(WD.VAULT_KEY, JSON.stringify({ records: [] }));

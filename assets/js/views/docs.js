@@ -234,6 +234,7 @@
           ${canWriteHere ? `<button class="btn primary lg" data-register>${I('plus')} 문서 등록</button>` : ''}
         </div>
       </div>
+      ${(WD.db.notices || []).length ? WD.noticeBoardHTML(u, { manage: false, limit: 3 }) : ''}
       <div class="sum-cards">
         <a class="sum-card s-pending ${filter === 'pending' ? 'active' : ''}" href="${qsF('pending')}">${I('stamp')}<div><small>${isCEO ? '결재·확인 필요' : '결재 대기 (내 문서)'}</small><b>${base.filter(isPending).length}</b></div></a>
         <a class="sum-card s-revision ${filter === 'revision' ? 'active' : ''}" href="${qsF('revision')}">${I('pen')}<div><small>${isCEO ? '보완 요청 중' : '보완 요청 (내가 고칠 문서)'}</small><b>${base.filter(isRevision).length}</b></div></a>
@@ -259,6 +260,8 @@
         </section>
       </div></div>`;
     el.querySelectorAll('[data-href]').forEach((r) => r.addEventListener('click', () => (location.hash = r.dataset.href)));
+    WD.bindNotices(el, { ...u, role: 'staff' });
+    if (query.notice) WD.openNoticeById(query.notice, { ...u, role: 'staff' });
     el.querySelector('[data-register]')?.addEventListener('click', () => registerFlow(u, sub ? 'c_ceo' : cur?.id, sub));
     el.querySelectorAll('[data-export]').forEach((b) => b.addEventListener('click', () => exportMenu(WD.doc(b.dataset.export))));
     const q = el.querySelector('#doc-q');

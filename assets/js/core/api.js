@@ -81,6 +81,41 @@
         WD.tx((db) => { const r = db.attendance.find((a) => a.id === id); db.attendance = db.attendance.filter((a) => a.id !== id); WD.audit('ATTEND_EDIT', { type: 'attendance', id, name: WD.userName(r?.userId) }, `${r?.date} ${r?.status} 기록 삭제`); });
       },
     },
+    /* ---------- 메시지 (알림함 소통 창구) — 본인이 보내거나 받은 대화만 반환 ---------- */
+    messages: {
+      _mine(u) { return (WD.db.messages || []).filter((m) => m.from === u.id || m.to === u.id || m.to === 'ALL'); },
+      unreadCount() { const u = WD.auth.currentRaw(); if (!u) return 0; return (WD.db.messages || []).filter((m) => m.from !== u.id && (m.to === u.id || m.to === 'ALL') && !(m.readBy || []).includes(u.id)).length; },
+      conversations() {
+        const u = me(); const mine = this._mine(u);
+        const peers = WD.db.users.filter((x) => x.id !== u.id && (x.status === 'ACTIVE' || mine.some((m) => m.from === x.id || m.to === x.id)));
+        const conv = (id) => { const ms = mine.filter((m) => (id === 'ALL' ? m.to === 'ALL' : m.to !== 'ALL' && (m.from === id || m.to === id))); const last = ms[ms.length - 1]; return { id, last, unread: ms.filter((m) => m.from !== u.id && !(m.readBy || []).includes(u.id)).length }; };
+        const list = [{ ...conv('ALL'), name: '전체 공지방', role: null, all: true }, ...peers.map((p) => ({ ...conv(p.id), name: p.name, role: WD.effectiveRole(p), inactive: p.status !== 'ACTIVE' }))];
+        return list.sort((a, b) => (a.all ? -1 : b.all ? 1 : ((b.last?.at || '') > (a.last?.at || '') ? 1 : (b.last?.at || '') < (a.last?.at || '') ? -1 : a.name.localeCompare(b.name))));
+      },
+      thread(peer) {
+        const u = me();
+        return clone(this._mine(u).filter((m) => (peer === 'ALL' ? m.to === 'ALL' : m.to !== 'ALL' && ((m.from === u.id && m.to === peer) || (m.from === peer && m.to === u.id)))));
+      },
+      send(peer, text, docId = null) {
+        WD.blockPreview();
+        const u = me(); text = String(text || '').trim();
+        if (!text && !docId) throw new Error('메시지를 입력하세요.');
+        if (peer !== 'ALL') { const p = WD.user(peer); if (!p || p.status !== 'ACTIVE') throw new Error('비활성화된 계정에는 보낼 수 없습니다.'); }
+        return WD.tx((db) => {
+          db.messages = db.messages || [];
+          const m = { id: WD.uid('msg'), from: u.id, to: peer, text: text.slice(0, 2000), docId, at: WD.now(), readBy: [u.id] };
+          db.messages.push(m);
+          if (db.messages.length > 5000) db.messages.splice(0, db.messages.length - 5000);
+          WD.audit('DISPATCH', { type: 'message', id: m.id, name: peer === 'ALL' ? '전체 공지방' : WD.userName(peer) }, `메시지 ${text.slice(0, 40)}${docId ? ' · 문서 첨부' : ''}`);
+          return clone(m);
+        });
+      },
+      markRead(peer) {
+        const u = WD.auth.currentRaw(); if (!u || u.preview) return;
+        const ids = this.thread(peer).filter((m) => m.from !== u.id && !(m.readBy || []).includes(u.id)).map((m) => m.id);
+        if (ids.length) WD.tx((db) => db.messages.forEach((m) => { if (ids.includes(m.id)) m.readBy = [...(m.readBy || []), u.id]; }));
+      },
+    },
     documents: {
       /** 내가 볼 수 있는 문서만 */
       visible() { const u = me(); return WD.db.documents.filter((d) => WD.sec.canView(d, u)); },

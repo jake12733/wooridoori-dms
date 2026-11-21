@@ -60,7 +60,7 @@
     const kind = base.kind || '근로';
     const staff = WD.staffUsers();
     const m = WD.ui.modal({ title: `${kind === '근로' ? '근로계약서' : '위촉계약서'} ${base.id ? '수정' : '작성'}`, size: 'lg', okText: '저장 (초안)',
-      body: `<div class="grid2">
+      body: `${(WD.db.contractTemplates || []).some((t) => t.type === 'fields') ? `<label class="fld tpl-load"><span>${I('template')} 양식 불러오기</span><select data-tpl-load><option value="">— 저장된 계약 조건 양식 선택 —</option>${WD.db.contractTemplates.filter((t) => t.type === 'fields').map((t) => `<option value="${t.id}">[${t.kind}] ${esc(t.name)}</option>`).join('')}</select></label>` : ''}<div class="grid2">
         <label class="fld"><span>계약 유형</span><select data-k="kind"><option ${kind === '근로' ? 'selected' : ''}>근로</option><option ${kind === '위촉' ? 'selected' : ''}>위촉</option></select></label>
         <label class="fld"><span>대상 직원 (등록된 계정 선택)</span><select data-k="userId"><option value="">— 직접 입력 —</option>${staff.map((s) => `<option value="${s.id}" ${s.id === base.userId ? 'selected' : ''}>${esc(s.name)} (${esc(s.empType)} · ${esc(s.dept)})</option>`).join('')}</select></label>
         <label class="fld"><span>또는 이름 직접 입력 (계정 없는 직원)</span><input data-k="userName" value="${esc(base.userId ? '' : (base.userName || ''))}" placeholder="예) 홍길동"></label>
@@ -84,6 +84,12 @@
         v.pay = Number(v.pay);
         onSave(v);
       } });
+    m.el.querySelector('[data-tpl-load]')?.addEventListener('change', (e) => {
+      const t = (WD.db.contractTemplates || []).find((x) => x.id === e.target.value); if (!t) return;
+      const set = (k, val) => { const i = m.el.querySelector(`[data-k="${k}"]`); if (i && val !== undefined && val !== null && val !== '') i.value = val; };
+      set('kind', t.kind); TPL_FIELDS.forEach((k) => set(k, t.fields?.[k]));
+      WD.ui.toast(`'${t.name}' 양식을 불러왔습니다.`);
+    });
     return m;
   }
 
@@ -125,6 +131,123 @@
   }
 
   /* ---------------- 계약서 목록 ---------------- */
+  /* ---------------- 계약서 양식함 (미리 만든 근로·위촉계약서 보관) ---------------- */
+  const TPL_FIELDS = ['place', 'duties', 'workDays', 'workHours', 'payType', 'pay', 'payDay'];
+  const extOf = (n) => (String(n || '').split('.').pop() || '').toLowerCase();
+  const fileTypeLabel = (n) => ({ hwp: '한글', hwpx: '한글', docx: '워드', doc: '워드', pdf: 'PDF', xlsx: '엑셀', xls: '엑셀', png: '이미지', jpg: '이미지', jpeg: '이미지' }[extOf(n)] || '파일');
+
+  function saveContractTemplate({ kind, name, type, fields = null, fileId = null, fileName = '' }) {
+    const u = WD.auth.current(); WD.blockPreview();
+    return WD.tx((db) => {
+      db.contractTemplates = db.contractTemplates || [];
+      const t = { id: WD.uid('ctpl'), kind, name, type, fields, fileId, fileName, createdBy: u.id, createdAt: WD.now(), updatedAt: WD.now() };
+      db.contractTemplates.unshift(t);
+      WD.audit('TEMPLATE_SAVE', { type: 'contractTemplate', id: t.id, name }, `${kind}계약서 양식 저장 (${type === 'file' ? fileTypeLabel(fileName) + ' 파일' : '계약 조건'})`);
+      return t;
+    });
+  }
+  WD.saveContractTemplate = saveContractTemplate;
+
+  function uploadContractTemplate(defKind) {
+    WD.ui.modal({ title: '미리 만든 계약서 양식 저장', okText: '양식함에 저장', size: 'md',
+      body: `<p class="muted">사용 중인 근로계약서·위촉계약서 파일(한글·워드·PDF·엑셀·사진)을 올려 두면 언제든 꺼내 쓸 수 있어요.</p>
+        <div class="grid2"><label class="fld"><span>종류</span><select data-k="kind"><option ${defKind !== '위촉' ? 'selected' : ''}>근로</option><option ${defKind === '위촉' ? 'selected' : ''}>위촉</option></select></label>
+        <label class="fld"><span>양식 이름</span><input data-k="name" placeholder="예) 2027 정규직 근로계약서"></label></div>
+        <label class="fld"><span>계약서 파일</span><input type="file" data-file accept=".hwp,.hwpx,.docx,.doc,.pdf,.xlsx,.xls,.png,.jpg,.jpeg"></label>`,
+      onOk: async (w) => {
+        const f = w.querySelector('[data-file]').files[0]; if (!f) throw new Error('계약서 파일을 선택하세요.');
+        const kind = w.querySelector('[data-k=kind]').value;
+        const name = w.querySelector('[data-k=name]').value.trim() || f.name.replace(/\.[^.]+$/, '');
+        const fileId = await WD.files.put(f, { name: f.name });
+        saveContractTemplate({ kind, name, type: 'file', fileId, fileName: f.name });
+        WD.ui.toast('계약서 양식함에 저장했습니다.'); WD.app.refresh();
+      } });
+  }
+
+  function fieldTemplateForm(defKind, base = null) {
+    WD.ui.modal({ title: base ? '계약 조건 양식 수정' : '계약 조건 양식 만들기', okText: '저장', size: 'lg',
+      body: `<p class="muted">자주 쓰는 계약 조건(근무지·업무·근무시간·임금)을 양식으로 저장해 두면, 새 계약서를 만들 때 [양식 불러오기]로 한 번에 채워집니다.</p>
+        <div class="grid2"><label class="fld"><span>종류</span><select data-k="kind"><option ${(base?.kind || defKind) !== '위촉' ? 'selected' : ''}>근로</option><option ${(base?.kind || defKind) === '위촉' ? 'selected' : ''}>위촉</option></select></label>
+        <label class="fld"><span>양식 이름</span><input data-k="name" value="${esc(base?.name || '')}" placeholder="예) 방과후 강사 기본 위촉 조건"></label>
+        <label class="fld full"><span>근무(강의) 장소</span><input data-k="place" value="${esc(base?.fields?.place || '')}"></label>
+        <label class="fld full"><span>업무 내용 / 강의 과목</span><input data-k="duties" value="${esc(base?.fields?.duties || '')}"></label>
+        <label class="fld"><span>근무일</span><input data-k="workDays" value="${esc(base?.fields?.workDays || '')}" placeholder="월~금 (주 5일)"></label>
+        <label class="fld"><span>근무시간</span><input data-k="workHours" value="${esc(base?.fields?.workHours || '')}" placeholder="09:00~18:00"></label>
+        <label class="fld"><span>임금 형태</span><select data-k="payType">${['월급', '시급', '강의료(시간당)', '강의료(회당)'].map((x) => `<option ${x === base?.fields?.payType ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+        <label class="fld"><span>금액(원)</span><input type="number" data-k="pay" value="${esc(base?.fields?.pay || '')}"></label>
+        <label class="fld full"><span>지급일·방법</span><input data-k="payDay" value="${esc(base?.fields?.payDay || '')}" placeholder="매월 10일"></label></div>`,
+      onOk: (w) => {
+        const v = {}; w.querySelectorAll('[data-k]').forEach((i) => (v[i.dataset.k] = i.value.trim()));
+        if (!v.name) throw new Error('양식 이름을 입력하세요.');
+        const fields = {}; TPL_FIELDS.forEach((k) => (fields[k] = k === 'pay' ? Number(v[k] || 0) : v[k]));
+        if (base) WD.tx((db) => { const t = db.contractTemplates.find((x) => x.id === base.id); Object.assign(t, { kind: v.kind, name: v.name, fields, updatedAt: WD.now() }); WD.audit('TEMPLATE_SAVE', { type: 'contractTemplate', id: t.id, name: t.name }, '계약 조건 양식 수정'); });
+        else saveContractTemplate({ kind: v.kind, name: v.name, type: 'fields', fields });
+        WD.ui.toast('양식을 저장했습니다.'); WD.app.refresh();
+      } });
+  }
+
+  /** 파일 양식 → 인사·직원 분류에 새 문서로 만들어 바로 작성 */
+  async function useFileTemplate(t) {
+    WD.blockPreview();
+    const rec = await WD.files.get(t.fileId);
+    if (!rec) throw new Error('양식 파일을 이 브라우저 저장소에서 찾을 수 없습니다.');
+    const ext = extOf(t.fileName);
+    const file = new File([rec.blob], t.fileName, { type: rec.type });
+    let kind = 'file', content = { fileId: t.fileId, name: t.fileName, size: rec.size, type: rec.type };
+    if (['hwp', 'hwpx'].includes(ext)) kind = 'hwp';
+    else if (ext === 'docx') { kind = 'doc'; content = await WD.editors.doc.importDocx(file); }
+    else if (['xlsx', 'xls'].includes(ext)) { kind = 'sheet'; content = await WD.editors.sheet.importFile(file); }
+    const d = WD.wf.createDoc({ title: `${t.name} (${WD.ymd()})`, kind, folderId: 'c_hr', content, note: `계약서 양식 '${t.name}'에서 작성`, sub: t.kind === '근로' ? '근로계약' : '위촉계약' });
+    WD.app.go(`#/doc/${d.id}`);
+  }
+
+  async function previewFileTemplate(t) {
+    const rec = await WD.files.get(t.fileId);
+    if (!rec) { WD.ui.toast('양식 파일을 찾을 수 없습니다.', 'error'); return; }
+    const ext = extOf(t.fileName);
+    const url = URL.createObjectURL(rec.blob);
+    const body = ['png', 'jpg', 'jpeg'].includes(ext) ? `<img src="${url}" style="max-width:100%">`
+      : ext === 'pdf' ? `<iframe src="${url}" style="width:100%;height:70vh;border:0"></iframe>`
+      : `<p class="muted">${esc(t.fileName)} (${fileTypeLabel(t.fileName)}) — [이 양식으로 작성]을 누르면 웹 편집기로 열립니다.</p>`;
+    const m = WD.ui.modal({ title: `양식 미리보기 · ${t.name}`, size: 'lg', hideOk: true, cancelText: '닫기', body });
+    m.el.addEventListener('click', () => { if (!m.el.isConnected) URL.revokeObjectURL(url); });
+  }
+
+  function contractTemplatesHTML(db) {
+    const list = db.contractTemplates || [];
+    return `<div class="card ctpl-card">
+      <div class="card-head"><h3>${I('template')} 계약서 양식함 <em class="cnt">${list.length}</em></h3>
+        <div class="row gap-s"><button class="btn sm primary" data-ctpl-upload>${I('upload')} 미리 만든 계약서 파일 저장</button><button class="btn sm ghost" data-ctpl-fields>${I('plus')} 계약 조건 양식 만들기</button></div></div>
+      ${list.length ? `<div class="ctpl-grid">${list.map((t) => `<div class="ctpl-item">
+        <div class="ctpl-ico ${t.type === 'file' ? 'f-' + extOf(t.fileName) : 'fields'}">${t.type === 'file' ? esc(fileTypeLabel(t.fileName)) : '조건'}</div>
+        <div class="ctpl-meta"><b>${esc(t.name)}</b><small><span class="tag">${t.kind}계약서</span> ${t.type === 'file' ? esc(t.fileName) : '계약 조건 양식'} · ${WD.ymd(new Date(t.updatedAt || t.createdAt))}</small></div>
+        <div class="ctpl-act"><button class="btn sm primary" data-ctpl-use="${t.id}">이 양식으로 작성</button>
+          ${t.type === 'file' ? `<button class="btn sm ghost" data-ctpl-view="${t.id}">미리보기</button><button class="btn sm ghost icon-only" data-ctpl-dl="${t.id}" title="원본 내려받기">${I('download')}</button>` : `<button class="btn sm ghost" data-ctpl-edit="${t.id}">수정</button>`}
+          <button class="btn sm ghost icon-only" data-ctpl-del="${t.id}" title="삭제">${I('trash')}</button></div>
+      </div>`).join('')}</div>` : `<p class="muted">아직 저장된 양식이 없습니다. 쓰고 계신 근로계약서·위촉계약서 파일을 올려 두거나, 자주 쓰는 계약 조건을 양식으로 만들어 두세요.</p>`}
+    </div>`;
+  }
+
+  function bindContractTemplates(el, u, createFromFields) {
+    const db = WD.db;
+    const T = (id) => (db.contractTemplates || []).find((x) => x.id === id);
+    el.querySelector('[data-ctpl-upload]')?.addEventListener('click', () => uploadContractTemplate('근로'));
+    el.querySelector('[data-ctpl-fields]')?.addEventListener('click', () => fieldTemplateForm('근로'));
+    el.querySelectorAll('[data-ctpl-use]').forEach((b) => b.addEventListener('click', async () => {
+      const t = T(b.dataset.ctplUse);
+      try { if (t.type === 'file') await useFileTemplate(t); else createFromFields(t); } catch (e) { WD.ui.toast(e.message, 'error'); }
+    }));
+    el.querySelectorAll('[data-ctpl-view]').forEach((b) => b.addEventListener('click', () => previewFileTemplate(T(b.dataset.ctplView))));
+    el.querySelectorAll('[data-ctpl-edit]').forEach((b) => b.addEventListener('click', () => fieldTemplateForm('근로', T(b.dataset.ctplEdit))));
+    el.querySelectorAll('[data-ctpl-dl]').forEach((b) => b.addEventListener('click', () => { const t = T(b.dataset.ctplDl); WD.sec.exportDoc({ type: 'contractTemplate', id: t.id, title: t.name }, '양식 원본', async () => { const rec = await WD.files.get(t.fileId); if (!rec) throw new Error('파일 없음'); WD.sec.saveBlob(rec.blob, t.fileName); }); }));
+    el.querySelectorAll('[data-ctpl-del]').forEach((b) => b.addEventListener('click', async () => {
+      const t = T(b.dataset.ctplDel);
+      if (!(await WD.ui.confirm('양식 삭제', `'${t.name}' 양식을 삭제할까요? (이미 작성된 계약서는 그대로 남습니다)`, { danger: true }))) return;
+      WD.tx((d2) => { d2.contractTemplates = d2.contractTemplates.filter((x) => x.id !== t.id); WD.audit('TEMPLATE_DELETE', { type: 'contractTemplate', id: t.id, name: t.name }); });
+      WD.app.refresh();
+    }));
+  }
+
   V.contracts = (el, p, q, u) => {
     const db = WD.db; const isCEO = WD.isTop(u);
     const list = db.contracts.filter((c) => isCEO || c.userId === u.id).sort((a, b) => (a.end > b.end ? 1 : -1));
@@ -135,16 +258,19 @@
         ${isCEO ? `<div class="row gap-s"><button class="btn primary" data-new="근로">${I('plus')} 근로계약서</button><button class="btn ghost" data-new="위촉">${I('plus')} 위촉계약서</button></div>` : ''}</div>
       <div class="alert-board">${buckets.map((b) => { const xs = alerts.filter((a) => a.bucket === b); return `<div class="ab-col ab-${b.replace('-', '').toLowerCase()}"><div class="ab-head"><b>${b}</b><small>${b === 'D-7' ? '7일 이내' : b === 'D-14' ? '8~14일' : '15~30일'}</small><em>${xs.length}</em></div>
         ${xs.map((a) => `<div class="ab-item"><div><span class="tag">${a.kind}</span> <a href="${a.link}"><b>${esc(a.title)}</b></a><small>만료일 ${a.end} · D-${a.days}</small></div>${a.kind === '계약 종료' && isCEO ? (a.renewed ? '<span class="tag ok">갱신 초안 있음</span>' : `<button class="btn sm primary" data-renew="${a.refId}">갱신 초안</button>`) : ''}</div>`).join('') || '<p class="muted tiny">없음</p>'}</div>`; }).join('')}</div>
+      ${isCEO ? contractTemplatesHTML(db) : ''}
       <div class="card flush"><table class="tbl"><thead><tr><th>계약서</th><th>유형</th><th>대상</th><th>계약 기간</th><th>상태</th><th>만료</th><th class="r">작업</th></tr></thead><tbody>
       ${list.map((c) => `<tr class="click" data-href="#/contract/${c.id}"><td>${I('contract')} <b>${esc(c.title)}</b>${c.renewedFrom ? ' <span class="tag">갱신</span>' : ''}</td><td>${c.kind === '근로' ? '근로계약' : '위촉계약'}</td><td>${esc(c.userId ? WD.userName(c.userId) : (c.userName || '-') + ' (직접 입력)')}</td><td class="nowrap">${c.start} ~ ${c.end}</td><td>${cBadge(c.status)}</td><td>${c.status === 'SEALED' ? WD.ui.dday(WD.daysLeft(c.end)) : '-'}</td><td class="r"><a class="btn sm ghost" href="#/contract/${c.id}">열기</a></td></tr>`).join('')}
       </tbody></table>${list.length ? '' : WD.ui.empty('계약서가 없습니다.', 'contract')}</div></div>`;
     el.querySelectorAll('[data-href]').forEach((r) => r.addEventListener('click', (e) => { if (!e.target.closest('a,button')) location.hash = r.dataset.href; }));
     el.querySelectorAll('[data-renew]').forEach((b) => b.addEventListener('click', () => renewDraft(db.contracts.find((c) => c.id === b.dataset.renew))));
-    el.querySelectorAll('[data-new]').forEach((b) => b.addEventListener('click', () => contractForm(u, { kind: b.dataset.new }, (v) => {
+    const createWith = (base) => contractForm(u, base, (v) => {
       const emp = WD.user(v.userId) || { name: v.userName };
-      const c = WD.tx((db2) => { const nc = { ...v, id: WD.uid('c'), title: `${v.kind === '근로' ? '근로계약서' : '위촉계약서'} (${emp.name})`, status: 'DRAFT', locked: false, createdAt: WD.now(), folderId: 'c_hr' }; db2.contracts.push(nc); WD.audit('CONTRACT_CREATE', { type: 'contract', id: nc.id, name: nc.title }); return nc; });
+      const c = WD.tx((db2) => { const nc = { ...v, id: WD.uid('c'), title: `${v.kind === '근로' ? '근로계약서' : '위촉계약서'} (${emp.name})`, status: 'DRAFT', locked: false, createdAt: WD.now(), folderId: 'c_hr' }; delete nc.tplId; db2.contracts.push(nc); WD.audit('CONTRACT_CREATE', { type: 'contract', id: nc.id, name: nc.title }); return nc; });
       WD.app.go(`#/contract/${c.id}`);
-    })));
+    });
+    el.querySelectorAll('[data-new]').forEach((b) => b.addEventListener('click', () => createWith({ kind: b.dataset.new })));
+    if (isCEO) bindContractTemplates(el, u, (t) => createWith({ kind: t.kind, ...t.fields }));
   };
 
   /* ---------------- 계약서 상세 ---------------- */
@@ -165,6 +291,7 @@
           ${!c.userId && ['DRAFT', 'SENT'].includes(c.status) ? `<button class="btn accent" data-sign>${I('pen')} 현장 서명 받기 (${esc(c.userName || '대상자')})</button>` : ''}
           ${isCEO && c.status === 'SENT' ? '<span class="muted">직원 서명 대기 중</span>' : ''}
           ${isCEO && c.status === 'SIGNED' ? `<button class="btn success" data-seal>${I('stamp')} 대표 직인 날인·잠금</button>` : ''}
+          ${isCEO ? `<button class="btn ghost" data-save-tpl>${I('template')} 양식으로 저장</button>` : ''}
           ${isCEO && c.status === 'SEALED' ? `<button class="btn ghost" data-renew>${I('refresh')} 재계약/갱신 초안</button>` : ''}
           ${isCEO ? `<button class="btn ghost" data-pdf>${I('download')} PDF 내보내기</button>` : `<span class="tag lock">${I('lock', 'xs')} 유출 방지(DLP) 적용</span>`}
         </div></div>
@@ -185,6 +312,12 @@
       save((x) => { x.status = 'SEALED'; x.sealedAt = WD.now(); x.locked = true; WD.notify(x.userId, { title: `계약 체결 완료: ${x.title}`, body: '대표 직인이 날인되어 계약서가 확정·잠금되었습니다.', link: `#/contract/${x.id}`, type: 'APPROVED' }); }, 'CONTRACT_SEAL', '전자 직인 날인 · 완료 문서 잠금');
     });
     el.querySelector('[data-renew]')?.addEventListener('click', () => renewDraft(c));
+    el.querySelector('[data-save-tpl]')?.addEventListener('click', async () => {
+      const name = await WD.ui.prompt('계약 조건을 양식으로 저장', '양식 이름', { value: `${c.kind}계약 기본 조건 (${c.duties || ''})` });
+      if (!name) return;
+      const fields = {}; TPL_FIELDS.forEach((k) => (fields[k] = c[k]));
+      try { saveContractTemplate({ kind: c.kind, name, type: 'fields', fields }); WD.ui.toast('계약서 양식함에 저장했습니다.'); } catch (e) { WD.ui.toast(e.message, 'error'); }
+    });
     el.querySelector('[data-pdf]')?.addEventListener('click', () => WD.sec.exportDoc({ type: 'contract', id: c.id, title: c.title }, 'PDF', async () => {
       await WD.editors.doc.ensure();
       const blob = await WD.editors.doc.toPdfBlob(c.title, WD.renderContract(c));
