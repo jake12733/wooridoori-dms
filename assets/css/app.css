@@ -838,3 +838,24 @@ body.preview-on .topbar { background: #fffaf0; }
 .nav-item.nav-sub { margin-left: 22px; padding: 8px 10px; font-size: 14px; position: relative; color: #b9d0c6; }
 .nav-item.nav-sub::before { content: ''; position: absolute; left: -10px; top: 0; bottom: 50%; width: 9px; border-left: 1px solid rgba(255,255,255,.22); border-bottom: 1px solid rgba(255,255,255,.22); border-bottom-left-radius: 6px; }
 .nav-item.nav-sub .ic { width: 16px; height: 16px; }
+
+/* =========================================================================
+ * v11 — 우리두리 로고 (사이드바 · 로그인 · 로딩 · 로그인 초록 배경)
+ * ========================================================================= */
+.brand-mark, .boot-logo, .brand .brand-mark, .login-brand .brand-mark {
+  background: #fff url('../img/logo-icon-256.png?v=1') center / 86% no-repeat;
+  box-shadow: 0 2px 8px rgba(0,0,0,.18);
+}
+.brand-mark::before, .brand-mark::after, .boot-logo::before, .boot-logo::after { display: none !important; }
+.brand .brand-mark { width: 42px; height: 42px; border-radius: 12px; }
+.brand-mark.lg, .login-brand .brand-mark { width: 60px; height: 60px; border-radius: 16px; }
+.boot-logo { width: 64px; height: 64px; border-radius: 18px; }
+/* 로그인 왼쪽 초록 영역 전체 배경 로고 */
+.login-hero::after { display: none; }
+.login-hero::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: url('../img/logo-icon-white.png?v=1') no-repeat right -90px center / min(78vh, 640px);
+  opacity: .08;
+}
+.login-hero > * { position: relative; z-index: 1; }
+@media (max-width: 900px) { .login-hero::before { background-size: 320px; background-position: right -60px bottom -40px; } }
