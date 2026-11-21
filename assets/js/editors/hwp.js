@@ -1,6 +1,6 @@
 /* =========================================================================
  * 한글(HWP/HWPX) — rhwp (Rust + WebAssembly, MIT) @rhwp/editor
- *  - 최고 관리자: 전체 편집기(iframe) — 열람·편집·HWP/HWPX 저장
+ *  - 대표: 전체 편집기(iframe) — 열람·편집·HWP/HWPX 저장
  *  - 실장·직원: "보안 열람 모드"
  *      rhwp 엔진은 화면 밖 비활성(inert) iframe에서 문서만 해석하고,
  *      페이지는 SVG로 변환해 이 페이지 안에 그립니다.
@@ -15,7 +15,7 @@
   WD.editors.hwp = {
     async mount(el, content, { readOnly = false } = {}) {
       const u = WD.auth.currentRaw();
-      const secure = u?.role !== 'ADMIN';
+      const secure = u?.role !== 'ceo';
       el.innerHTML = `<div class="hwp-shell"><div class="hwp-status">${WD.icon('hwp')} rhwp 한글 엔진(WebAssembly) 불러오는 중…</div>
         ${secure ? '<div class="hwp-pages no-select"></div>' : ''}<div class="hwp-host ${secure ? 'hwp-engine-hidden' : ''}"></div></div>`;
       const host = el.querySelector('.hwp-host');
@@ -28,7 +28,7 @@
 
       const rec = content?.fileId ? await WD.files.get(content.fileId) : null;
       if (secure && !rec) {
-        status.innerHTML = `${WD.icon('lock')} ${content?.fileId ? '원본 파일을 이 브라우저 저장소에서 찾을 수 없습니다.' : '아직 내용이 없는 한글 문서입니다. 한글 문서 작성·편집은 최고 관리자만 가능합니다.'}`;
+        status.innerHTML = `${WD.icon('lock')} ${content?.fileId ? '원본 파일을 이 브라우저 저장소에서 찾을 수 없습니다.' : '아직 내용이 없는 한글 문서입니다. 한글 문서 작성·편집은 대표만 가능합니다.'}`;
         return { destroy() {}, isDirty: () => false };
       }
 
@@ -58,7 +58,7 @@
           pg.innerHTML = String(svg).replace(/<script[\s\S]*?<\/script>/gi, '');
           pagesEl.appendChild(pg);
         }
-        status.innerHTML = `${WD.icon('lock')} 보안 열람 모드 · ${WD.esc(name)} · ${n}쪽${n > max ? ` (앞 ${max}쪽 표시)` : ''} — 한글 문서의 편집·저장·인쇄는 최고 관리자만 가능합니다.`;
+        status.innerHTML = `${WD.icon('lock')} 보안 열람 모드 · ${WD.esc(name)} · ${n}쪽${n > max ? ` (앞 ${max}쪽 표시)` : ''} — 한글 문서의 편집·저장·인쇄는 대표만 가능합니다.`;
         try { editor.destroy(); } catch (e) { /* noop */ }
         host.remove();
         return { destroy() {}, isDirty: () => false };

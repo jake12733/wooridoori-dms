@@ -60,9 +60,14 @@
   WD.user = (id) => (WD.db?.users || []).find((u) => u.id === id);
   WD.userName = (id) => WD.user(id)?.name || (id ? '(퇴사/삭제된 사용자)' : '-');
   WD.activeUsers = () => WD.db.users.filter((u) => u.status === 'ACTIVE');
-  WD.staffUsers = () => WD.db.users.filter((u) => u.status === 'ACTIVE' && (u.role === 'STAFF' || u.role === 'MANAGER'));
-  WD.ROLE_LABEL = { ADMIN: '최고 관리자', MANAGER: '실장', STAFF: '직원', RESIGNED: '비활성(퇴사)' };
-  WD.ceos = () => WD.db.users.filter((u) => u.role === 'ADMIN' && u.status === 'ACTIVE');
+  /** 대표를 제외한 활성 구성원 (관리자·실장·직원) */
+  WD.staffUsers = () => WD.db.users.filter((u) => u.status === 'ACTIVE' && u.role !== 'ceo');
+  WD.ROLES = ['ceo', 'admin', 'manager', 'staff'];
+  WD.ROLE_LABEL = { ceo: '대표', admin: '관리자', manager: '실장', staff: '직원' };
+  WD.roleBadge = (role) => `<span class="role-badge r-${role}">${WD.ROLE_LABEL[role] || role}</span>`;
+  /** 전역 상태: 로그인 사용자·직급 (매 화면 진입 시 DB에서 재조회, 새로고침에도 유지) */
+  WD.state = { user: null, role: null };
+  WD.ceos = () => WD.db.users.filter((u) => u.role === 'ceo' && u.status === 'ACTIVE');
   WD.folder = (id) => WD.db.folders.find((f) => f.id === id);
   WD.folderPath = (id) => {
     const f = WD.folder(id); if (!f) return '-';
@@ -114,12 +119,14 @@
   WD.vault = {
     _raw() { try { return JSON.parse(localStorage.getItem(WD.VAULT_KEY)) || { records: [] }; } catch (e) { return { records: [] }; } },
     read() {
-      if (!WD.auth.isCEO()) { WD.auditTx('VAULT_DENIED', { type: 'vault' }); throw new Error('최고 관리자 전용 보관 DB입니다.'); }
+      if (!WD.auth.isCEO()) { WD.auditTx('VAULT_DENIED', { type: 'vault' }); throw new Error('대표 전용 보관 DB입니다.'); }
       return this._raw();
     },
     put(records) {
       // 퇴사 확정 트랜잭션(대표 권한) 내부에서만 호출
-      if (!WD.auth.isCEO()) throw new Error('권한 없음');
+      // 퇴사 처리(대표·관리자) 시 쓰기만 허용, 읽기는 대표만
+      const r = WD.auth.current()?.role;
+      if (r !== 'ceo' && r !== 'admin') throw new Error('권한 없음');
       const v = this._raw(); v.records.push(...records);
       localStorage.setItem(WD.VAULT_KEY, JSON.stringify(v));
     },

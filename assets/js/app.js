@@ -1,50 +1,53 @@
 /* =========================================================================
- * 앱 셸 · 해시 라우터 · 로그인 화면 · 역할 기반 메뉴
+ * 앱 셸 · 해시 라우터 · 로그인 화면 · 4단계 직급(ceo/admin/manager/staff) 자동 분기
  * ========================================================================= */
 (function () {
   const WD = window.WD;
   const I = (n, c) => WD.icon(n, c);
   const V = (WD.views = WD.views || {});
   let cleanups = [];
+  const ALL = ['ceo', 'admin', 'manager', 'staff'];
+  const CEO = ['ceo'];
 
+  // 메뉴: roles에 포함된 직급에게만 보임 (라우트 권한과 동일)
   const NAV = [
-    { sec: '업무' },
-    { path: '/dashboard', label: '대시보드', icon: 'home' },
-    { path: '/docs', label: '통합 문서함', icon: 'folder' },
-    { path: '/templates', label: '새 문서·양식 템플릿', icon: 'template' },
-    { path: '/inbox', label: '수신함·발송 이력', icon: 'inbox', badge: 'inbox' },
-    { path: '/workflow', label: '결재·보완 워크플로우', icon: 'flow', badge: 'wf' },
-    { path: '/checklist', label: '필수 서류 체크리스트', icon: 'list' },
-    { path: '/contracts', label: '계약서 관리', icon: 'contract', badge: 'contract' },
-    { path: '/attendance', label: '출결·근태', icon: 'clock' },
-    { sec: '최고 관리자 전용', ceo: true },
-    { path: '/finance', label: '경영·매출 장부', icon: 'chart', ceo: true },
-    { path: '/people', label: '인사·계정 관리', icon: 'users', ceo: true },
-    { path: '/vault', label: '법정 보관 DB', icon: 'vault', ceo: true },
-    { path: '/audit', label: '감사 로그', icon: 'audit', ceo: true },
-    { path: '/launcher', label: '원클릭 런처', icon: 'rocket', ceo: true },
-    { sec: '시스템' },
-    { path: '/system', label: '아키텍처·보안 설계', icon: 'cog' },
+    { path: '/dashboard', label: '대시보드', icon: 'home', roles: CEO },
+    { path: '/docs', label: '통합 문서함', icon: 'folder', roles: ALL },
+    { path: '/attendance', label: '출결·근태', icon: 'clock', roles: ALL },
+    { path: '/workflow', label: '결재·보완', icon: 'flow', badge: 'wf', roles: CEO },
+    { path: '/inbox', label: '알림함', icon: 'inbox', badge: 'inbox', roles: ALL },
+    { path: '/contracts', label: '계약서', icon: 'contract', badge: 'contract', roles: ALL },
+    { path: '/checklist', label: '필수 서류', icon: 'list', roles: ALL },
+    { path: '/people', label: '직원·계정 관리', icon: 'users', roles: ['ceo', 'admin'] },
+    { sec: '🔒 대표 전용', roles: CEO },
+    { path: '/finance', label: '경영·매출 장부', icon: 'chart', roles: CEO },
+    { path: '/docs/c_ceo', label: '대표 전용 보안 폴더', icon: 'lock', roles: CEO },
+    { path: '/vault', label: '퇴사자 보관함', icon: 'vault', roles: CEO },
+    { path: '/audit', label: '보안 기록(감사 로그)', icon: 'audit', roles: CEO },
+    { path: '/launcher', label: '바로가기 관리', icon: 'rocket', roles: CEO },
   ];
 
   const ROUTES = [
-    ['/dashboard', 'dashboard'], ['/docs', 'docs'], ['/docs/:folder', 'docs'], ['/doc/:id', 'docView'], ['/new/:kind', 'newDoc'],
-    ['/templates', 'templates'], ['/inbox', 'inbox'], ['/workflow', 'workflow'], ['/checklist', 'checklist'],
-    ['/contracts', 'contracts'], ['/contract/:id', 'contract'], ['/attendance', 'attendance'],
-    ['/finance', 'finance', true], ['/people', 'people', true], ['/vault', 'vault', true], ['/audit', 'audit', true], ['/launcher', 'launcher', true],
-    ['/system', 'system'],
+    ['/dashboard', 'dashboard', CEO], ['/docs', 'docs', ALL], ['/docs/:folder', 'docs', ALL], ['/doc/:id', 'docView', ALL], ['/new/:kind', 'newDoc', ALL],
+    ['/templates', 'templates', ALL], ['/inbox', 'inbox', ALL], ['/workflow', 'workflow', CEO], ['/checklist', 'checklist', ALL],
+    ['/contracts', 'contracts', ALL], ['/contract/:id', 'contract', ALL], ['/attendance', 'attendance', ALL],
+    ['/finance', 'finance', CEO], ['/people', 'people', ['ceo', 'admin']], ['/vault', 'vault', CEO], ['/audit', 'audit', CEO], ['/launcher', 'launcher', CEO],
+    ['/system', 'system', CEO],
   ];
+  /** 직급별 첫 화면: 대표=대시보드, 그 외=통합 문서함 */
+  WD.homeFor = (u) => (u?.role === 'ceo' ? '#/dashboard' : '#/docs');
 
   function parseHash() {
-    const raw = location.hash.replace(/^#/, '') || '/dashboard';
+    const raw = location.hash.replace(/^#/, '') || '/';
     const [path, qs] = raw.split('?');
     const query = Object.fromEntries(new URLSearchParams(qs || ''));
-    for (const [pattern, view, ceoOnly] of ROUTES) {
+    if (path === '/' || path === '') return { path: '/', view: 'home', params: {}, query };
+    for (const [pattern, view, roles] of ROUTES) {
       const pp = pattern.split('/'), hp = path.split('/');
       if (pp.length !== hp.length) continue;
       const params = {}; let ok = true;
       pp.forEach((seg, i) => { if (seg.startsWith(':')) params[seg.slice(1)] = decodeURIComponent(hp[i]); else if (seg !== hp[i]) ok = false; });
-      if (ok) return { path, view, params, query, ceoOnly, pattern };
+      if (ok) return { path, view, params, query, roles, pattern };
     }
     return { path, view: path === '/login' ? 'login' : 'notFound', params: {}, query };
   }
@@ -52,10 +55,8 @@
   function badgeCounts(u) {
     const db = WD.db;
     const inbox = db.notifications.filter((n) => n.userId === u.id && !n.read).length;
-    const wf = u.role === 'ADMIN'
-      ? db.documents.filter((d) => ['PENDING', 'RESUBMITTED'].includes(d.status)).length
-      : db.documents.filter((d) => (d.ownerId === u.id || d.assigneeId === u.id) && d.status === 'REVISION_REQUIRED').length;
-    const contract = u.role === 'ADMIN'
+    const wf = u.role === 'ceo' ? db.documents.filter((d) => ['PENDING', 'RESUBMITTED'].includes(d.status)).length : 0;
+    const contract = u.role === 'ceo'
       ? WD.wf.expiryAlerts().filter((a) => a.kind === '계약 종료' && !a.renewed).length + db.contracts.filter((c) => c.status === 'SIGNED').length
       : db.contracts.filter((c) => c.userId === u.id && c.status === 'SENT').length;
     return { inbox, wf, contract };
@@ -63,10 +64,12 @@
 
   function shell(u, route) {
     const counts = badgeCounts(u);
-    const isCEO = u.role === 'ADMIN';
-    const nav = NAV.filter((n) => !n.ceo || isCEO).map((n) => {
-      if (n.sec) return `<div class="nav-sec">${n.sec}</div>`;
-      const active = route.path === n.path || (n.path !== '/dashboard' && route.path.startsWith(n.path)) || (n.path === '/docs' && route.path.startsWith('/doc')) || (n.path === '/templates' && route.path.startsWith('/new')) || (n.path === '/contracts' && route.path.startsWith('/contract'));
+    const isCEO = u.role === 'ceo';
+    const nav = NAV.filter((n) => n.roles.includes(u.role)).map((n) => {
+      if (n.sec) return `<div class="nav-sec ceo-sec">${n.sec}</div>`;
+      const active = route.path === n.path
+        || (n.path === '/docs' && (route.path.startsWith('/doc') || route.path.startsWith('/new')) && route.path !== '/docs/c_ceo')
+        || (n.path === '/contracts' && route.path.startsWith('/contract'));
       const c = n.badge ? counts[n.badge] : 0;
       return `<a class="nav-item ${active ? 'active' : ''}" href="#${n.path}">${I(n.icon)}<span>${n.label}</span>${c ? `<em class="nav-badge">${c}</em>` : ''}</a>`;
     }).join('');
@@ -74,13 +77,14 @@
     return `
     <div class="layout">
       <aside class="sidebar" id="sidebar">
-        <a class="brand" href="#/dashboard">
+        <a class="brand" href="${WD.homeFor(u)}">
           <span class="brand-mark"></span>
           <span class="brand-txt"><b>우리두리사회적협동조합</b><small>문서관리시스템</small></span>
         </a>
+        <div class="side-user">${WD.ui.avatar(u, 40)}<div><b>${WD.esc(u.name)}</b>${WD.roleBadge(u.role)}</div></div>
         <nav class="nav">${nav}</nav>
         <div class="side-foot">
-          <div class="sec-pill ${isCEO ? 'ceo' : 'staff'}">${I(isCEO ? 'stamp' : 'lock')}<span>${isCEO ? '최고 관리자 · 반출 허용' : `${WD.ROLE_LABEL[u.role]} · 유출 방지(DLP) 적용`}</span></div>
+          <div class="sec-pill ${isCEO ? 'ceo' : 'staff'}">${I(isCEO ? 'stamp' : 'lock')}<span>${isCEO ? '대표 · 다운로드 허용' : '웹 열람전용 · 다운로드 차단'}</span></div>
         </div>
       </aside>
       <div class="side-dim" data-close-side></div>
@@ -92,11 +96,11 @@
             <div class="dd">
               <button class="icon-btn bell" data-dd="ntf" aria-label="알림">${I('bell')}${counts.inbox ? `<em>${counts.inbox}</em>` : ''}</button>
               <div class="dd-menu ntf-menu" data-ddm="ntf">
-                <div class="dd-head"><b>알림</b><a href="#/inbox">수신함 전체 보기</a></div>
+                <div class="dd-head"><b>알림</b><a href="#/inbox">전체 보기</a></div>
                 ${myNotes.length ? myNotes.map((n) => `<a class="ntf ${n.read ? '' : 'unread'}" href="${n.link || '#/inbox'}" data-ntf="${n.id}"><span class="ntf-type t-${n.type}"></span><span><b>${WD.esc(n.title)}</b><small>${WD.esc(n.body)}</small><time>${WD.fmtDT(n.at)}</time></span></a>`).join('') : '<p class="muted pad">새 알림이 없습니다.</p>'}
               </div>
             </div>
-            <div class="user-chip">${WD.ui.avatar(u, 32)}<span><b>${WD.esc(u.name)}</b><small>${WD.esc(u.title)} · ${WD.ROLE_LABEL[u.role] || u.role}</small></span></div>
+            <div class="user-chip">${WD.ui.avatar(u, 32)}<span><b>${WD.esc(u.name)}</b>${WD.roleBadge(u.role)}</span></div>
             <button class="icon-btn" data-logout title="로그아웃" aria-label="로그아웃">${I('logout')}</button>
           </div>
         </header>
@@ -123,10 +127,11 @@
         <h1>함께 쓰는 문서,<br>안전하게 지키는 기록.</h1>
         <p>협동조합과 연계 기관·교육 현장을 위한 통합 문서 · 계약 · 근태 · 보안 · 경영 관리 시스템</p>
         <ul class="hero-list">
-          <li>${I('lock')}<span><b>문서 유출 방지(DLP)</b> 실장·직원은 작성·열람만, 다운로드·PDF/엑셀 내보내기는 최고 관리자만</span></li>
-          <li>${I('eye')}<span><b>열람 보호</b> 우클릭·복사·인쇄 차단, 이름·이메일·현재 시간 워터마크</span></li>
+          <li>${I('users')}<span><b>직급별 자동 화면</b> 대표·관리자·실장·직원에 맞는 메뉴만 보여요</span></li>
+          <li>${I('lock')}<span><b>문서 유출 방지</b> 다운로드·PDF/엑셀 내보내기는 대표만</span></li>
+          <li>${I('eye')}<span><b>열람 보호</b> 우클릭·복사·인쇄 차단, 이름·직급·아이디·접속 시간 워터마크</span></li>
           <li>${I('users')}<span><b>계정 비활성화 즉시 차단</b> 퇴사 처리 시 모든 세션 즉시 만료·강제 로그아웃</span></li>
-          <li>${I('audit')}<span><b>감사 로그</b> 열람·수정 버전·발송·승인·차단 시도를 자동 기록</span></li>
+          <li>${I('clock')}<span><b>1초 출결 체크</b> 큰 버튼 하나로 출석·지각·병가·휴가·대강</span></li>
         </ul>
       </section>`;
 
@@ -135,14 +140,14 @@
       <section class="login-panel">
         <form class="login-card" id="setup-form" autocomplete="off">
           <h2>최초 설정</h2>
-          <p class="muted">처음 사용하시는군요. 시스템 전체를 관리할 <b>최고 관리자(대표)</b> 계정을 만들어 주세요. 이후 실장·직원 계정은 최고 관리자가 [인사·계정 관리]에서 등록합니다.</p>
+          <p class="muted">처음 사용하시는군요. 시스템 전체를 관리할 <b>대표(원장)</b> 계정을 먼저 만들어 주세요. 관리자·실장·직원 계정은 이후 [직원·계정 관리]에서 등록합니다.</p>
           <div class="alert alert-danger hidden" id="setup-err"></div>
           <label class="fld"><span>이름</span><input name="name" required placeholder="예) 홍길동"></label>
-          <label class="fld"><span>직함</span><input name="title" value="대표"></label>
+          <label class="fld"><span>직함</span><input name="title" value="원장"></label>
           <label class="fld"><span>이메일 (로그인 ID)</span><input name="email" type="email" required autocomplete="username" placeholder="name@example.com"></label>
           <label class="fld"><span>비밀번호 (8자 이상)</span><input name="pw" type="password" required minlength="8" autocomplete="new-password"></label>
           <label class="fld"><span>비밀번호 확인</span><input name="pw2" type="password" required minlength="8" autocomplete="new-password"></label>
-          <button class="btn primary block lg" type="submit">최고 관리자 계정 만들기</button>
+          <button class="btn primary block lg" type="submit">대표 계정 만들기</button>
           <p class="tiny muted mt-s">데이터는 현재 이 브라우저에 저장됩니다. 여러 PC에서 함께 쓰려면 서버(DB) 연동이 필요합니다.</p>
         </form>
       </section></div>`;
@@ -155,7 +160,7 @@
       try {
         await WD.createFirstAdmin({ name: f.name.value.trim(), title: f.title.value.trim(), email: f.email.value.trim().toLowerCase(), password: f.pw.value });
         const r = await WD.auth.login(f.email.value, f.pw.value);
-        if (r.ok) location.hash = '#/dashboard'; else show(r.msg);
+        if (r.ok) location.hash = WD.homeFor(r.user); else show(r.msg);
         WD.app.route();
       } catch (ex) { show(ex.message); }
     });
@@ -175,7 +180,7 @@
           <label class="fld"><span>이메일</span><input name="id" type="email" autocomplete="username" required placeholder="name@example.com"></label>
           <label class="fld"><span>비밀번호</span><input name="pw" type="password" autocomplete="current-password" required placeholder="비밀번호"></label>
           <button class="btn primary block lg" type="submit">로그인</button>
-          <p class="tiny muted mt-s">계정은 최고 관리자가 발급합니다. 비밀번호를 잊으셨다면 최고 관리자에게 재설정을 요청하세요.</p>
+          <p class="tiny muted mt-s">계정은 대표 또는 관리자가 발급합니다. 비밀번호를 잊으셨다면 재설정을 요청하세요.</p>
         </form>
         <p class="login-foot">© ${new Date().getFullYear()} ${WD.ORG} · 무단 접근 및 자료 반출은 관련 법령에 따라 처벌될 수 있습니다.</p>
       </section></div>`;
@@ -186,12 +191,12 @@
       const r = await WD.auth.login(form.id.value, form.pw.value);
       if (!r.ok) { err.classList.remove('hidden'); err.innerHTML = `${I('lock')}<span class="pre">${WD.esc(r.msg)}</span>`; return; }
       WD.wf.autoNotify();
-      location.hash = '#/dashboard';
+      location.hash = WD.homeFor(r.user); // 직급별 첫 화면으로 자동 이동
     });
   };
 
   V.notFound = (el) => { el.innerHTML = `<div class="page">${WD.ui.empty('페이지를 찾을 수 없습니다.', 'alert')}</div>`; };
-  V.forbidden = (el) => { el.innerHTML = `<div class="page"><div class="forbidden">${I('lock')}<h2>최고 관리자 전용 영역입니다</h2><p>접근 시도가 감사 로그에 기록되었습니다.</p><a class="btn primary" href="#/dashboard">대시보드로</a></div></div>`; };
+  V.forbidden = (el) => { const u = WD.auth.currentRaw(); el.innerHTML = `<div class="page"><div class="forbidden">${I('lock')}<h2>접근 권한이 없는 화면입니다</h2><p>${WD.ROLE_LABEL[u?.role] || ''} 직급에서는 열 수 없습니다. 접근 시도는 보안 기록에 남습니다.</p><a class="btn primary" href="${WD.homeFor(u)}">처음 화면으로</a></div></div>`; };
 
   /* ---------------- 라우팅 ---------------- */
   async function route() {
@@ -211,11 +216,18 @@
     }
     const u = v.user;
     WD.sec.applyMode(u);
+    if (r.view === 'home' || (r.roles && !r.roles.includes(u.role) && r.view === 'dashboard')) {
+      if (r.view === 'dashboard') WD.auditTx('ACCESS_DENIED', { type: 'route', name: r.path }, `${WD.ROLE_LABEL[u.role]}(${u.role}) 직급의 대시보드 접근 차단`);
+      location.replace(WD.homeFor(u)); return;
+    }
     root.innerHTML = shell(u, r);
     bindShell();
     const el = document.getElementById('view');
-    if (r.ceoOnly && u.role !== 'ADMIN') {
-      WD.auditTx('ACCESS_DENIED', { type: 'route', name: r.path }, `${u.role}의 관리자 전용 메뉴 접근 시도`);
+    if (r.view === 'home') { location.replace(WD.homeFor(u)); return; }
+    // 직접 경로 접근 차단: 대시보드는 첫 화면으로 돌려보내고, 나머지는 차단 화면 + 기록
+    if (r.roles && !r.roles.includes(u.role)) {
+      WD.auditTx('ACCESS_DENIED', { type: 'route', name: r.path }, `${WD.ROLE_LABEL[u.role]}(${u.role}) 직급의 권한 밖 화면 접근 시도`);
+      if (r.view === 'dashboard') { location.replace(WD.homeFor(u)); return; }
       V.forbidden(el); return;
     }
     try { await (V[r.view] || V.notFound)(el, r.params, r.query, u); }

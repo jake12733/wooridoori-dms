@@ -25,7 +25,7 @@
       }
       if (u.role === 'RESIGNED' || u.status !== 'ACTIVE') {
         WD.tx(() => WD.audit('LOGIN_BLOCKED', { type: 'user', id: u.id, name: u.name, actorName: u.name }, `퇴사일 ${WD.fmtDT(u.resignedAt)} · 계정 비활성`));
-        return { ok: false, blocked: true, msg: '비활성화(퇴사 처리)된 계정입니다. 시스템 접근이 차단되었습니다.\n문의: 최고 관리자' };
+        return { ok: false, blocked: true, msg: '비활성화(퇴사 처리)된 계정입니다. 시스템 접근이 차단되었습니다.\n문의: 대표' };
       }
       const s = { id: WD.uid('ses'), userId: u.id, createdAt: WD.now(), lastSeen: WD.now(), expiresAt: new Date(Date.now() + TTL_MS).toISOString(), revokedAt: null, revokedReason: '', ua: navigator.userAgent.slice(0, 80) };
       WD.tx((db) => {
@@ -51,15 +51,18 @@
       if (!sid) return { ok: false, reason: '' };
       const s = WD.db.sessions.find((x) => x.id === sid);
       if (!s) return { ok: false, reason: '세션이 존재하지 않습니다.' };
-      if (s.revokedAt) return { ok: false, reason: s.revokedReason === 'RESIGNED' ? '계정이 비활성화(퇴사 처리)되어 모든 세션이 만료되었습니다. 강제 로그아웃됩니다.' : s.revokedReason === 'LOGOUT' ? '로그아웃되었습니다.' : '최고 관리자에 의해 세션이 종료되었습니다.' };
+      if (s.revokedAt) return { ok: false, reason: s.revokedReason === 'RESIGNED' ? '계정이 비활성화(퇴사 처리)되어 모든 세션이 만료되었습니다. 강제 로그아웃됩니다.' : s.revokedReason === 'LOGOUT' ? '로그아웃되었습니다.' : '대표에 의해 세션이 종료되었습니다.' };
       if (new Date(s.expiresAt) < new Date()) return { ok: false, reason: '세션이 만료되었습니다. 다시 로그인해 주세요.', expired: true };
       const u = WD.db.users.find((x) => x.id === s.userId);
       if (!u || u.status !== 'ACTIVE' || u.role === 'RESIGNED') return { ok: false, reason: '계정이 비활성화(퇴사 처리)되어 강제 로그아웃되었습니다.' };
+      // 직급은 매번 DB의 사용자 정보에서 자동 조회 → 전역 상태에 반영 (새로고침해도 세션으로 복원)
+      WD.state.user = u; WD.state.role = u.role; WD.state.sessionStartedAt = s.createdAt;
+      sessionStorage.setItem('wd_role', u.role);
       return { ok: true, user: u, session: s };
     },
 
     current() { const v = auth.validate(); return v.ok ? v.user : null; },
-    isCEO() { return auth.current()?.role === 'ADMIN'; },
+    isCEO() { return auth.current()?.role === 'ceo'; },
 
     logout(reason = '', { silent = false } = {}) {
       const sid = sessionStorage.getItem(SID_KEY);
@@ -69,14 +72,14 @@
           if (s && !s.revokedAt) { WD.audit('LOGOUT', { type: 'user', id: s.userId, name: WD.userName(s.userId) }); s.revokedAt = WD.now(); s.revokedReason = 'LOGOUT'; }
         });
       }
-      sessionStorage.removeItem(SID_KEY);
+      sessionStorage.removeItem(SID_KEY); sessionStorage.removeItem('wd_role'); WD.state.user = null; WD.state.role = null;
       if (reason) sessionStorage.setItem('wd_logout_reason', reason);
       if (!silent) location.hash = '#/login';
     },
 
     /** 강제 로그아웃 (권한 회수 감지) */
     force(reason) {
-      sessionStorage.removeItem(SID_KEY);
+      sessionStorage.removeItem(SID_KEY); sessionStorage.removeItem('wd_role'); WD.state.user = null; WD.state.role = null;
       sessionStorage.setItem('wd_logout_reason', reason);
       document.body.classList.remove('staff-mode', 'ceo-mode');
       document.getElementById('modal-root').innerHTML = '';

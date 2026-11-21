@@ -21,7 +21,7 @@
   /* ---------- 계약서 본문 렌더 ---------- */
   WD.renderContract = (c) => {
     const emp = WD.user(c.userId) || { name: c.userName || '(퇴사자)', phone: '' };
-    const ceo = WD.db.users.find((x) => x.role === 'ADMIN');
+    const ceo = WD.db.users.find((x) => x.role === 'ceo');
     const yr = (s) => s ? `${s.slice(0, 4)}년 ${+s.slice(5, 7)}월 ${+s.slice(8, 10)}일` : '';
     const isEmp = c.kind === '근로';
     const pay = isEmp ? `${c.payType} ${WD.won(c.pay)}` : `${c.payType} ${WD.won(c.pay)}`;
@@ -122,7 +122,7 @@
 
   /* ---------------- 계약서 목록 ---------------- */
   V.contracts = (el, p, q, u) => {
-    const db = WD.db; const isCEO = u.role === 'ADMIN';
+    const db = WD.db; const isCEO = u.role === 'ceo';
     const list = db.contracts.filter((c) => isCEO || c.userId === u.id).sort((a, b) => (a.end > b.end ? 1 : -1));
     const alerts = WD.wf.expiryAlerts(isCEO ? null : u.id);
     const buckets = ['D-7', 'D-14', 'D-30'];
@@ -138,7 +138,7 @@
     el.querySelectorAll('[data-renew]').forEach((b) => b.addEventListener('click', () => renewDraft(db.contracts.find((c) => c.id === b.dataset.renew))));
     el.querySelectorAll('[data-new]').forEach((b) => b.addEventListener('click', () => !WD.staffUsers().length ? WD.ui.toast('먼저 [인사·계정 관리]에서 직원 계정을 등록하세요.', 'warn') : contractForm(u, { kind: b.dataset.new }, (v) => {
       const emp = WD.user(v.userId);
-      const c = WD.tx((db2) => { const nc = { ...v, id: WD.uid('c'), title: `${v.kind === '근로' ? '근로계약서' : '위촉계약서'} (${emp.name})`, status: 'DRAFT', locked: false, createdAt: WD.now(), folderId: v.kind === '근로' ? 'f_hr_emp' : 'f_hr_inst' }; db2.contracts.push(nc); WD.audit('CONTRACT_CREATE', { type: 'contract', id: nc.id, name: nc.title }); return nc; });
+      const c = WD.tx((db2) => { const nc = { ...v, id: WD.uid('c'), title: `${v.kind === '근로' ? '근로계약서' : '위촉계약서'} (${emp.name})`, status: 'DRAFT', locked: false, createdAt: WD.now(), folderId: 'c_hr' }; db2.contracts.push(nc); WD.audit('CONTRACT_CREATE', { type: 'contract', id: nc.id, name: nc.title }); return nc; });
       WD.app.go(`#/contract/${c.id}`);
     })));
   };
@@ -147,7 +147,7 @@
   V.contract = (el, { id }, q, u) => {
     const db = WD.db; const c = db.contracts.find((x) => x.id === id);
     if (!c) { el.innerHTML = `<div class="page">${WD.ui.empty('계약서를 찾을 수 없습니다. (퇴사자 계약서는 법정 보관 DB로 이관됩니다)', 'alert')}</div>`; return; }
-    const isCEO = u.role === 'ADMIN';
+    const isCEO = u.role === 'ceo';
     if (!isCEO && c.userId !== u.id) { WD.auditTx('ACCESS_DENIED', { type: 'contract', id: c.id, name: c.title }, '타인 계약서 열람 시도'); V.forbidden(el); return; }
     WD.auditTx('DOC_VIEW', { type: 'contract', id: c.id, name: c.title }, `계약서 열람 (${CST[c.status][0]})`);
     const steps = ['DRAFT', 'SENT', 'SIGNED', 'SEALED'];
@@ -166,6 +166,7 @@
       <div class="steps">${['초안 작성', '서명 요청', '직원 전자서명', '대표 직인·잠금'].map((s, i) => `<div class="step ${i <= si ? 'done' : ''} ${i === si ? 'cur' : ''}"><span>${i + 1}</span><b>${s}</b></div>`).join('')}</div>
       <div class="contract-wrap protected" id="cw">${WD.renderContract(c)}</div></div>`;
     WD.sec.watermark(el.querySelector('#cw'));
+    if (u.role !== 'ceo') WD.sec.watermark(el.querySelector('.page'), { full: true });
     const save = (fn, action, detail) => { WD.tx((d) => { const x = d.contracts.find((y) => y.id === c.id); fn(x, d); WD.audit(action, { type: 'contract', id: c.id, name: c.title }, detail); }); WD.app.refresh(); };
     el.querySelector('[data-edit]')?.addEventListener('click', () => contractForm(u, c, (v) => save((x) => Object.assign(x, v), 'CONTRACT_CREATE', '초안 조건 수정')));
     el.querySelector('[data-send]')?.addEventListener('click', () => save((x) => { x.status = 'SENT'; x.sentAt = WD.now(); WD.notify(x.userId, { title: `계약서 서명 요청: ${x.title}`, body: '내용 확인 후 전자서명해 주세요.', link: `#/contract/${x.id}`, type: 'SIGN' }); }, 'DISPATCH', `서명 요청 → ${WD.userName(c.userId)}`));
@@ -186,90 +187,88 @@
     }));
   };
 
-  /* ---------------- 출결·근태 ---------------- */
-  const AST = ['근무', '지각', '조퇴', '병가', '휴가', '대강'];
-  const ACLS = { 근무: 'a-work', 지각: 'a-late', 조퇴: 'a-early', 병가: 'a-sick', 휴가: 'a-leave', 대강: 'a-sub' };
-  const mins = (a, b) => { if (!a || !b) return 0; const [h1, m1] = a.split(':').map(Number); const [h2, m2] = b.split(':').map(Number); return Math.max(0, h2 * 60 + m2 - (h1 * 60 + m1) - (h2 - h1 >= 8 ? 60 : 0)); };
-  const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+  /* ---------------- 출결·근태 (대표: 통계·관리 / 그 외: 1초 체크) ---------------- */
+  const ACLS = { 출석: 'a-work', 지각: 'a-late', 병가: 'a-sick', 휴가: 'a-leave', 대강: 'a-sub' };
+  const attBadge = (s) => `<span class="badge ${ACLS[s] || ''}">${s}</span>`;
 
-  V.attendance = (el, p, q, u) => {
-    const db = WD.db; const isCEO = u.role === 'ADMIN';
+  V.attendance = (el, p, q, u) => (u.role === 'ceo' ? attendanceCEO(el, q, u) : attendanceSelf(el, u));
+
+  /** 관리자·실장·직원: 큰 버튼 5개 + 사유 + 오늘 내 기록(잠금) — 타인 기록·통계는 API에서 아예 내려오지 않음 */
+  function attendanceSelf(el, u) {
+    const today = WD.ymd();
+    const mine = WD.api.attendance.mine({ date: today }).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    const dow = '일월화수목금토'[new Date().getDay()];
+    el.innerHTML = `<div class="page narrow-att">
+      <div class="att-hero">
+        <small class="muted">${today} (${dow})</small>
+        <h1 class="att-clock" id="att-clock">${WD.hm()}</h1>
+        <p class="muted">${esc(u.name)} ${WD.roleBadge(u.role)} · 오늘 상태를 눌러 주세요</p>
+      </div>
+      <div class="att-buttons">${WD.ATT_TYPES.map((t) => `<button class="att-btn ${t.cls}" data-att="${t.key}">${I(t.icon)}<b>${t.key}</b><small>${t.desc}</small></button>`).join('')}</div>
+      <div class="att-reason"><input id="att-note" maxlength="80" placeholder="사유 (병가·휴가·대강은 꼭 적어 주세요. 예: 감기 / 연차 / 3교시 김선생님 대신)"></div>
+      <div class="card att-today">
+        <div class="card-head"><h3>${I('check')} 오늘 등록한 내역</h3><small class="muted">${I('lock', 'xs')} 등록 후에는 삭제·수정할 수 없어요 (수정은 대표에게 요청)</small></div>
+        ${mine.length ? `<ul class="att-list">${mine.map((a) => `<li>${attBadge(a.status)}<span class="t">${a.time}</span><span class="n">${esc(a.note || '')}</span><span class="st">${a.approved ? '<span class="tag ok">대표 확인</span>' : '<span class="tag">확인 대기</span>'} ${I('lock', 'xs')}</span></li>`).join('')}</ul>` : '<p class="muted">아직 오늘 등록한 내역이 없습니다.</p>'}
+      </div>
+    </div>`;
+    const tick = setInterval(() => { const c = el.querySelector('#att-clock'); if (c) c.textContent = WD.hm(); }, 10000);
+    WD.app.onCleanup(() => clearInterval(tick));
+    el.querySelectorAll('[data-att]').forEach((b) => b.addEventListener('click', () => {
+      try {
+        const r = WD.api.attendance.add(b.dataset.att, el.querySelector('#att-note').value);
+        WD.ui.toast(`${r.status} 등록 완료 (${r.time})`);
+        WD.app.refresh();
+      } catch (e) { WD.ui.toast(e.message, 'warn'); }
+    }));
+  }
+
+  /** 대표: 이번 달 요약 카드 + 직원별 표(지각·병가/휴가·대강) + 수정·승인 */
+  function attendanceCEO(el, q, u) {
     const month = q.m || WD.monthKey();
     const [Y, M] = month.split('-').map(Number);
     const prev = WD.monthKey(new Date(Y, M - 2, 1)), next = WD.monthKey(new Date(Y, M, 1));
-    const days = new Date(Y, M, 0).getDate();
-    const people = isCEO ? WD.staffUsers() : [u];
-    const recs = db.attendance.filter((a) => a.date.startsWith(month));
-    const summary = (uid) => { const s = Object.fromEntries(AST.map((k) => [k, 0])); let m = 0; recs.filter((a) => a.userId === uid).forEach((a) => { s[a.status]++; m += mins(a.in, a.out); }); return { s, hours: (m / 60).toFixed(1) }; };
-    const today = WD.ymd();
-    const mineToday = db.attendance.find((a) => a.userId === u.id && a.date === today);
-    const todayAll = WD.staffUsers().map((x) => ({ x, r: db.attendance.find((a) => a.userId === x.id && a.date === today) }));
-
+    const st = WD.api.attendance.stats(month);
+    const pendingAll = st.people.flatMap((pp) => pp.records.filter((r) => !r.approved));
     el.innerHTML = `<div class="page">
-      <div class="page-head"><div><h1>선생님 출결 · 근태</h1><p class="muted">출근/퇴근 및 근무·지각·조퇴·병가·휴가·대강 기록과 월별 집계</p></div>
+      <div class="page-head simple"><div><h1>출결·근태 관리</h1><p class="muted">직원이 버튼으로 체크한 근태를 한눈에 보고 수정·승인합니다.</p></div>
         <div class="seg"><a href="#/attendance?m=${prev}">‹</a><span class="seg-label">${Y}년 ${M}월</span><a href="#/attendance?m=${next}">›</a></div></div>
-      ${!isCEO ? `<div class="card clock-card">
-        <div><small class="muted">${today} (${'일월화수목금토'[new Date().getDay()]})</small><h2 id="clock-now">${WD.hm()}</h2><p class="muted">기준 근무시간 ${u.workStart} ~ ${u.workEnd}</p></div>
-        <div class="clock-state">${mineToday ? `<span class="badge ${ACLS[mineToday.status]}">${mineToday.status}</span><div>출근 <b>${mineToday.in || '-'}</b> · 퇴근 <b>${mineToday.out || '-'}</b></div>` : '<span class="muted">오늘 기록 없음</span>'}</div>
-        <div class="row gap-s"><button class="btn primary lg" data-in ${mineToday?.in || ['병가', '휴가'].includes(mineToday?.status) ? 'disabled' : ''}>${I('clock')} 출근</button><button class="btn ghost lg" data-out ${!mineToday?.in || mineToday?.out ? 'disabled' : ''}>퇴근</button><button class="btn ghost" data-req>병가·휴가 신청</button></div>
-      </div>` : `<div class="kpis five">
-        <div class="kpi"><small>오늘 출근</small><b>${todayAll.filter((t) => t.r?.in).length}</b><span class="muted">/ ${todayAll.length}명</span></div>
-        <div class="kpi warn"><small>오늘 지각</small><b>${todayAll.filter((t) => t.r?.status === '지각').length}</b></div>
-        <div class="kpi info"><small>휴가·병가</small><b>${todayAll.filter((t) => ['휴가', '병가'].includes(t.r?.status)).length}</b></div>
-        <div class="kpi"><small>이번 달 대강</small><b>${recs.filter((r) => r.status === '대강').length}</b></div>
-        <div class="kpi danger"><small>이번 달 지각·조퇴</small><b>${recs.filter((r) => ['지각', '조퇴'].includes(r.status)).length}</b></div></div>`}
-      <div class="card flush"><div class="sub-head">${I('chart')} ${M}월 집계</div><table class="tbl"><thead><tr><th>직원</th>${AST.map((s) => `<th class="c">${s}</th>`).join('')}<th class="c">총 근무시간</th></tr></thead><tbody>
-        ${people.map((x) => { const { s, hours } = summary(x.id); return `<tr><td><div class="row gap-s center">${WD.ui.avatar(x, 24)} <b>${esc(x.name)}</b> <small class="muted">${esc(x.empType)}</small></div></td>${AST.map((k) => `<td class="c">${s[k] ? `<span class="badge ${ACLS[k]}">${s[k]}</span>` : '<span class="muted">0</span>'}</td>`).join('')}<td class="c"><b>${hours}</b>h</td></tr>`; }).join('')}
+      <div class="kpis att-kpis">
+        <div class="kpi ok"><small>출석 현황</small><b>${st.total.출석}</b><span class="muted">이번 달 출석 체크 수</span></div>
+        <div class="kpi warn"><small>지각 누적</small><b>${st.total.지각}</b><span class="muted">전 직원 합계</span></div>
+        <div class="kpi info"><small>병가·휴가</small><b>${st.total.병가휴가}</b><span class="muted">사용 일수</span></div>
+        <div class="kpi"><small>대강 현황</small><b>${st.total.대강}</b><span class="muted">대체 수업 건수</span></div>
+      </div>
+      ${pendingAll.length ? `<div class="alert alert-warn">${I('alert')}<span>확인 대기 중인 근태가 <b>${pendingAll.length}건</b> 있습니다.</span><button class="btn sm primary" data-approve-all style="margin-left:auto">모두 확인(승인)</button></div>` : ''}
+      <div class="card flush"><table class="tbl att-table"><thead><tr><th>이름</th><th>직급</th><th class="c">출석</th><th class="c">지각</th><th class="c">병가</th><th class="c">휴가</th><th>대강 내역</th><th class="c">확인 대기</th><th class="r">관리</th></tr></thead><tbody>
+        ${st.people.map((pp) => `<tr><td><div class="row gap-s center">${WD.ui.avatar(pp.user, 26)}<b>${esc(pp.user.name)}</b></div></td><td>${WD.roleBadge(pp.user.role)}</td>
+          <td class="c">${pp.출석}</td><td class="c">${pp.지각 ? `<b class="t-warn">${pp.지각}</b>` : 0}</td><td class="c">${pp.병가 || 0}</td><td class="c">${pp.휴가 || 0}</td>
+          <td class="tiny">${pp.subs.length ? pp.subs.map((s) => `${+s.date.slice(8)}일 ${esc(s.note || '')}`).join('<br>') : '<span class="muted">-</span>'}</td>
+          <td class="c">${pp.pending ? `<span class="badge st-pending">${pp.pending}</span>` : '-'}</td>
+          <td class="r"><button class="btn sm ghost" data-detail="${pp.user.id}">기록 보기·수정</button></td></tr>`).join('') || `<tr><td colspan="9"><p class="muted pad">등록된 직원이 없습니다. [직원·계정 관리]에서 계정을 등록하세요.</p></td></tr>`}
       </tbody></table></div>
-      <div class="card flush scroll-x"><div class="sub-head">${I('clock')} 일별 기록 ${isCEO ? '<small>셀을 눌러 수정 (대강 지정 포함)</small>' : ''}</div>
-        <table class="tbl att-grid"><thead><tr><th>직원</th>${Array.from({ length: days }, (_, i) => { const d = new Date(Y, M - 1, i + 1); const w = d.getDay(); return `<th class="c ${w === 0 ? 'sun' : w === 6 ? 'sat' : ''}">${i + 1}<small>${'일월화수목금토'[w]}</small></th>`; }).join('')}</tr></thead><tbody>
-        ${people.map((x) => `<tr><td class="nowrap"><b>${esc(x.name)}</b></td>${Array.from({ length: days }, (_, i) => { const date = `${month}-${WD.pad(i + 1)}`; const r = recs.find((a) => a.userId === x.id && a.date === date); const w = new Date(Y, M - 1, i + 1).getDay(); return `<td class="c cell ${w === 0 || w === 6 ? 'wkend' : ''} ${isCEO ? 'editable' : ''}" data-cell="${x.id}|${date}" title="${r ? `${r.status} ${r.in || ''}~${r.out || ''}${r.subFor ? ' · ' + WD.userName(r.subFor) + ' 대강' : ''}${r.note ? ' · ' + r.note : ''}` : ''}">${r ? `<span class="dot ${ACLS[r.status]}">${r.status[0]}</span>` : ''}</td>`; }).join('')}</tr>`).join('')}
-        </tbody></table>
-        <div class="legend row gap-s wrap pad">${AST.map((s) => `<span><span class="dot ${ACLS[s]}">${s[0]}</span> ${s}</span>`).join('')}</div></div>
-      ${!isCEO ? `<div class="card flush"><div class="sub-head">내 ${M}월 상세</div><table class="tbl"><thead><tr><th>날짜</th><th>상태</th><th>출근</th><th>퇴근</th><th>근무</th><th>비고</th></tr></thead><tbody>${recs.filter((a) => a.userId === u.id).sort((a, b) => (a.date < b.date ? 1 : -1)).map((a) => `<tr><td>${a.date}</td><td><span class="badge ${ACLS[a.status]}">${a.status}</span></td><td>${a.in || '-'}</td><td>${a.out || '-'}</td><td>${(mins(a.in, a.out) / 60).toFixed(1)}h</td><td class="muted">${esc(a.note || '')}${a.subFor ? ' · ' + esc(WD.userName(a.subFor)) + ' 대강' : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}
     </div>`;
-
-    const tick = setInterval(() => { const c = el.querySelector('#clock-now'); if (c) c.textContent = WD.hm(); }, 15000);
-    WD.app.onCleanup(() => clearInterval(tick));
-    el.querySelector('[data-in]')?.addEventListener('click', () => {
-      const now = WD.hm(); const late = toMin(now) > toMin(u.workStart) + 10;
-      WD.tx((d) => { let r = d.attendance.find((a) => a.userId === u.id && a.date === today); if (!r) { r = { id: WD.uid('att'), userId: u.id, date: today, in: '', out: '', status: '근무', note: '', subFor: null }; d.attendance.push(r); } r.in = now; if (r.status !== '대강') r.status = late ? '지각' : '근무'; WD.audit('ATTEND_IN', { type: 'attendance', id: r.id, name: u.name }, `${now}${late ? ' (지각)' : ''}`); });
-      WD.ui.toast(`출근 ${now}${late ? ' — 지각으로 기록되었습니다.' : ''}`); WD.app.refresh();
-    });
-    el.querySelector('[data-out]')?.addEventListener('click', () => {
-      const now = WD.hm(); const early = toMin(now) < toMin(u.workEnd) - 10;
-      WD.tx((d) => { const r = d.attendance.find((a) => a.userId === u.id && a.date === today); r.out = now; if (early && r.status === '근무') r.status = '조퇴'; WD.audit('ATTEND_OUT', { type: 'attendance', id: r.id, name: u.name }, `${now}${early ? ' (조퇴)' : ''}`); });
-      WD.ui.toast(`퇴근 ${now}`); WD.app.refresh();
-    });
-    el.querySelector('[data-req]')?.addEventListener('click', () => WD.ui.modal({ title: '병가·휴가 신청', okText: '등록',
-      body: `<label class="fld"><span>날짜</span><input type="date" data-d value="${today}"></label><label class="fld"><span>구분</span><select data-s><option>휴가</option><option>병가</option></select></label><label class="fld"><span>사유</span><input data-n placeholder="예) 연차, 병원 진료"></label>`,
-      onOk: (w) => { const date = w.querySelector('[data-d]').value; const st = w.querySelector('[data-s]').value; WD.tx((d) => { d.attendance = d.attendance.filter((a) => !(a.userId === u.id && a.date === date)); d.attendance.push({ id: WD.uid('att'), userId: u.id, date, in: '', out: '', status: st, note: w.querySelector('[data-n]').value, subFor: null }); WD.audit('ATTEND_EDIT', { type: 'attendance', name: u.name }, `${date} ${st} 신청`); WD.ceos().forEach((c) => WD.notify(c.id, { title: `${st} 신청: ${u.name} (${date})`, body: w.querySelector('[data-n]').value, link: '#/attendance', type: 'INFO' })); }); WD.app.refresh(); } }));
-    if (isCEO) el.querySelectorAll('[data-cell]').forEach((td) => td.addEventListener('click', () => {
-      const [uid, date] = td.dataset.cell.split('|'); const r = db.attendance.find((a) => a.userId === uid && a.date === date) || {};
-      const x = WD.user(uid);
-      WD.ui.modal({ title: `${x.name} · ${date} 근태`, okText: '저장',
-        body: `<div class="grid2"><label class="fld"><span>상태</span><select data-s><option value="">(기록 없음)</option>${AST.map((s) => `<option ${r.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
-          <label class="fld"><span>대강 대상(누구 수업을 대신)</span><select data-sub><option value="">-</option>${WD.staffUsers().filter((y) => y.id !== uid).map((y) => `<option value="${y.id}" ${r.subFor === y.id ? 'selected' : ''}>${esc(y.name)}</option>`).join('')}</select></label>
-          <label class="fld"><span>출근</span><input type="time" data-i value="${r.in || ''}"></label><label class="fld"><span>퇴근</span><input type="time" data-o value="${r.out || ''}"></label>
-          <label class="fld full"><span>비고</span><input data-n value="${esc(r.note || '')}"></label></div>`,
-        onOk: (w) => {
-          const st = w.querySelector('[data-s]').value;
-          WD.tx((d) => {
-            d.attendance = d.attendance.filter((a) => !(a.userId === uid && a.date === date));
-            if (st) d.attendance.push({ id: r.id || WD.uid('att'), userId: uid, date, status: st, in: w.querySelector('[data-i]').value, out: w.querySelector('[data-o]').value, note: w.querySelector('[data-n]').value, subFor: st === '대강' ? w.querySelector('[data-sub]').value || null : null });
-            WD.audit('ATTEND_EDIT', { type: 'attendance', id: r.id, name: x.name }, `${date}: ${r.status || '없음'} → ${st || '삭제'}`);
-          });
-          WD.app.refresh();
-        } });
+    el.querySelector('[data-approve-all]')?.addEventListener('click', () => { const n = WD.api.attendance.approve(pendingAll.map((r) => r.id)); WD.ui.toast(`${n}건 확인했습니다.`); WD.app.refresh(); });
+    el.querySelectorAll('[data-detail]').forEach((b) => b.addEventListener('click', () => {
+      const pp = st.people.find((x) => x.user.id === b.dataset.detail);
+      const rows = pp.records.sort((a, c) => (a.date + a.time < c.date + c.time ? 1 : -1));
+      const m = WD.ui.modal({ title: `${pp.user.name} · ${M}월 근태 기록`, size: 'lg', hideOk: true, cancelText: '닫기',
+        body: rows.length ? `<table class="tbl compact"><thead><tr><th>날짜</th><th>시각</th><th>상태</th><th>사유</th><th>확인</th><th class="r">수정</th></tr></thead><tbody>${rows.map((r) => `<tr data-row="${r.id}"><td>${r.date}</td><td>${r.time || '-'}</td>
+          <td><select data-st>${WD.ATT_TYPES.map((t) => `<option ${t.key === r.status ? 'selected' : ''}>${t.key}</option>`).join('')}</select></td>
+          <td><input data-note value="${esc(r.note || '')}"></td><td>${r.approved ? '<span class="tag ok">확인</span>' : '<span class="tag">대기</span>'}</td>
+          <td class="r nowrap"><button class="btn sm primary" data-save-row>저장·승인</button> <button class="btn sm ghost icon-only" data-del-row title="삭제">${I('trash')}</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted">이번 달 기록이 없습니다.</p>' });
+      m.el.querySelectorAll('[data-row]').forEach((tr) => {
+        tr.querySelector('[data-save-row]').addEventListener('click', () => { WD.api.attendance.update(tr.dataset.row, { status: tr.querySelector('[data-st]').value, note: tr.querySelector('[data-note]').value }); WD.ui.toast('저장·승인했습니다.'); m.close(); WD.app.refresh(); });
+        tr.querySelector('[data-del-row]').addEventListener('click', async () => { if (await WD.ui.confirm('기록 삭제', '이 근태 기록을 삭제할까요? (기록은 보안 기록에 남습니다)', { danger: true })) { WD.api.attendance.remove(tr.dataset.row); m.close(); WD.app.refresh(); } });
+      });
     }));
-  };
+  }
 
   /* ---------------- 인사·퇴사 관리 (CEO) ---------------- */
   const RETAIN = { contract: [3, '근로기준법 제42조(계약서류 3년 보존)'], attendance: [3, '근로기준법 제42조·시행령 제22조(근로자명부·근태 3년)'], accounting: [5, '국세기본법 제85조의3(장부·증빙 5년)'], hrdoc: [3, '근로기준법 제42조 준용(인사서류 3년, 보존기간 경과 후 파기)'] };
 
   function pendingFor(uid) {
     const db = WD.db;
-    const docs = db.documents.filter((d) => (d.ownerId === uid || d.assigneeId === uid) && d.status !== 'APPROVED' && WD.folder(d.folderId)?.id !== 'f_hr_rec');
+    const docs = db.documents.filter((d) => (d.ownerId === uid || d.assigneeId === uid) && d.status !== 'APPROVED' && !db.submissions.some((s) => s.docId === d.id));
     const contracts = db.contracts.filter((c) => c.userId === uid && c.status !== 'SEALED');
     return { docs, contracts };
   }
@@ -277,8 +276,8 @@
     const db = WD.db;
     const contracts = db.contracts.filter((c) => c.userId === uid);
     const attendance = db.attendance.filter((a) => a.userId === uid);
-    const acc = db.documents.filter((d) => d.ownerId === uid && d.status === 'APPROVED' && WD.folder(d.folderId)?.parentId === 'f_acc');
-    const hr = db.documents.filter((d) => d.ownerId === uid && d.folderId === 'f_hr_rec');
+    const acc = db.documents.filter((d) => d.ownerId === uid && d.status === 'APPROVED' && d.folderId === 'c_acc');
+    const hr = db.documents.filter((d) => d.ownerId === uid && db.submissions.some((s) => s.docId === d.id));
     return { contracts, attendance, acc, hr };
   }
 
@@ -287,7 +286,7 @@
     const legal = legalFor(target.id);
     const others = WD.activeUsers().filter((x) => x.id !== target.id);
     const opt = (sel = '') => others.map((o) => `<option value="${o.id}" ${o.id === sel ? 'selected' : ''}>${esc(o.name)} (${esc(o.title)})</option>`).join('');
-    const sameDept = others.find((o) => o.dept === target.dept && o.role === 'STAFF')?.id || others.find((o) => o.role === 'ADMIN')?.id;
+    const sameDept = others.find((o) => o.dept === target.dept && o.role === 'staff')?.id || others.find((o) => o.role === 'ceo')?.id;
     const m = WD.ui.modal({ title: `계정 비활성화(퇴사 처리) · ${target.name} (${target.title || ''}, ${target.dept})`, size: 'xl', okText: '비활성화 확정 · 모든 세션 즉시 만료', danger: true,
       body: `<div class="wizard">
         <section><h4><span class="wz-n">1</span> 미결 서류·진행 중 문서 인계/이관</h4>
@@ -307,7 +306,7 @@
           <ul class="auto-list">
             <li>${I('lock')} <b>즉시 로그인 차단</b> — 계정 상태 RESIGNED, 활성 세션 <b>${WD.db.sessions.filter((s) => s.userId === target.id && !s.revokedAt).length}개</b> 즉시 만료(다른 기기·탭 포함 4초 내 강제 로그아웃)</li>
             <li>${I('users')} <b>권한 회수</b> — 폴더 접근·문서 공유 대상·발송 프리셋에서 제거</li>
-            <li>${I('vault')} <b>법정 보관 DB 이관 (최고 관리자 전용, 일반 영역에서 분리)</b>
+            <li>${I('vault')} <b>법정 보관 DB 이관 (대표 전용, 일반 영역에서 분리)</b>
               <ul><li>계약서 ${legal.contracts.length}건 · ${RETAIN.contract[1]}</li><li>근태 기록 ${legal.attendance.length}건 · ${RETAIN.attendance[1]}</li><li>승인된 회계·정산 문서 ${legal.acc.length}건 · ${RETAIN.accounting[1]}</li><li>인사기록·제출서류 ${legal.hr.length}건 · ${RETAIN.hrdoc[1]}</li></ul></li>
             <li>${I('audit')} <b>감사 로그</b> — 인수인계·퇴사 확정·세션 회수·보관 이관 내역 기록</li>
           </ul>
@@ -331,7 +330,8 @@
 
   function confirmResign(target, transfers, { date, reason }) {
     const ceo = WD.auth.current();
-    if (ceo?.role !== 'ADMIN') throw new Error('최고 관리자만 계정을 비활성화할 수 있습니다.');
+    if (!WD.sec.canManageUsers(ceo)) throw new Error('대표 또는 관리자만 계정을 비활성화할 수 있습니다.');
+    if (ceo.role === 'admin' && !['manager', 'staff'].includes(target.role)) throw new Error('관리자는 실장·직원 계정만 비활성화할 수 있습니다.');
     const vaultRecs = []; const counts = {};
     const r = WD.tx((db) => {
       const out = { handover: 0, sessions: 0, shares: 0, presets: 0 };
@@ -349,7 +349,7 @@
       });
       // 2) 계정 비활성 + 세션 회수
       const u = db.users.find((x) => x.id === target.id);
-      u.prevRole = u.role; u.role = 'RESIGNED'; u.status = 'RESIGNED'; u.resignedAt = new Date(date + 'T18:00:00').toISOString(); u.resignReason = reason;
+      u.status = 'RESIGNED'; u.resignedAt = new Date(date + 'T18:00:00').toISOString(); u.resignReason = reason;
       out.sessions = WD.auth.revokeAll(db, target.id, 'RESIGNED');
       // 3) 권한 회수
       db.documents.forEach((d) => { if ((d.recipients || []).includes(target.id)) { d.recipients = d.recipients.filter((x) => x !== target.id); out.shares++; } if (d.assigneeId === target.id) d.assigneeId = null; });
@@ -387,11 +387,11 @@
     const vault = WD.vault._raw();
     const liveSessions = (uid) => db.sessions.filter((s) => s.userId === uid && !s.revokedAt && new Date(s.expiresAt) > new Date()).length;
     el.innerHTML = `<div class="page">
-      <div class="page-head"><div><h1>인사 · 계정 관리</h1><p class="muted">실장·직원 계정을 발급하고 권한을 관리합니다. 계정 비활성화(퇴사 처리) 시 해당 계정의 <b>모든 세션이 즉시 만료</b>되어 열려 있는 화면이 강제 로그아웃되고, 재로그인이 차단됩니다.</p></div>
+      <div class="page-head"><div><h1>직원 · 계정 관리</h1><p class="muted">관리자·실장·직원 계정을 발급하면 로그인할 때 직급에 맞는 화면이 자동으로 나옵니다. 계정 비활성화(퇴사 처리) 시 해당 계정의 <b>모든 세션이 즉시 만료</b>되어 열려 있는 화면이 강제 로그아웃되고, 재로그인이 차단됩니다.</p></div>
         <button class="btn primary" data-add>${I('plus')} 계정 등록</button></div>
       <div class="card flush"><div class="sub-head">${I('users')} 활성 계정 ${active.length}명</div><table class="tbl"><thead><tr><th>이름</th><th>이메일</th><th>권한</th><th>고용 유형</th><th>부서·직함</th><th class="c">활성 세션</th><th class="c">미결 문서</th><th class="r">작업</th></tr></thead><tbody>
-      ${active.map((x) => { const pd = pendingFor(x.id); return `<tr><td><div class="row gap-s center">${WD.ui.avatar(x, 28)}<b>${esc(x.name)}</b></div></td><td class="muted">${esc(x.email || x.loginId)}</td><td><span class="tag ${x.role === 'ADMIN' ? 'ok' : x.role === 'MANAGER' ? 'lock' : ''}">${WD.ROLE_LABEL[x.role]}</span></td><td>${esc(x.empType)}</td><td>${esc(x.dept)} · ${esc(x.title || '')}</td><td class="c">${liveSessions(x.id) ? `<span class="live-dot"></span>${liveSessions(x.id)}` : '0'}</td><td class="c">${pd.docs.length || '-'}</td>
-        <td class="r nowrap">${x.role !== 'ADMIN' ? `<button class="btn sm ghost" data-edit="${x.id}">수정</button> <button class="btn sm ghost" data-pw="${x.id}">비밀번호 재설정</button> <button class="btn sm ghost" data-kick="${x.id}" title="모든 세션 강제 종료">세션 종료</button> <button class="btn sm danger" data-resign="${x.id}">비활성화(퇴사)</button>` : `<button class="btn sm ghost" data-pw="${x.id}">비밀번호 변경</button>`}</td></tr>`; }).join('')}
+      ${active.map((x) => { const pd = pendingFor(x.id); return `<tr><td><div class="row gap-s center">${WD.ui.avatar(x, 28)}<b>${esc(x.name)}</b></div></td><td class="muted">${esc(x.email || x.loginId)}</td><td>${WD.roleBadge(x.role)}</td><td>${esc(x.empType)}</td><td>${esc(x.dept)} · ${esc(x.title || '')}</td><td class="c">${liveSessions(x.id) ? `<span class="live-dot"></span>${liveSessions(x.id)}` : '0'}</td><td class="c">${pd.docs.length || '-'}</td>
+        <td class="r nowrap">${(u.role === 'ceo' ? x.role !== 'ceo' : ['manager', 'staff'].includes(x.role)) ? `<button class="btn sm ghost" data-edit="${x.id}">수정</button> <button class="btn sm ghost" data-pw="${x.id}">비밀번호 재설정</button> <button class="btn sm ghost" data-kick="${x.id}" title="모든 세션 강제 종료">세션 종료</button> <button class="btn sm danger" data-resign="${x.id}">비활성화(퇴사)</button>` : x.id === u.id ? `<button class="btn sm ghost" data-pw="${x.id}">비밀번호 변경</button>` : '<span class="muted tiny">대표만 변경</span>'}</td></tr>`; }).join('')}
       </tbody></table>${active.length > 1 ? '' : `<div class="pad muted">아직 실장·직원 계정이 없습니다. [계정 등록]으로 발급하세요.</div>`}</div>
       <div class="card flush"><div class="sub-head">${I('lock')} 비활성 계정 (접근 차단) ${resigned.length}명</div><table class="tbl"><thead><tr><th>이름</th><th>이메일</th><th>이전 소속</th><th>비활성화 일시</th><th>로그인</th><th>보관 DB 기록</th><th></th></tr></thead><tbody>
       ${resigned.map((x) => `<tr><td><b>${esc(x.name)}</b></td><td class="muted">${esc(x.email || x.loginId)}</td><td>${esc(x.dept)} · ${esc(x.empType)}</td><td>${WD.fmtDT(x.resignedAt)}</td><td><span class="badge st-revision">${I('lock', 'xs')} 차단됨</span></td><td>${vault.records.filter((r) => r.userId === x.id).length}건</td><td class="r"><a class="btn sm ghost" href="#/vault?u=${x.id}">보관 DB 보기</a></td></tr>`).join('') || `<tr><td colspan="7"><p class="muted pad">비활성 계정이 없습니다.</p></td></tr>`}
@@ -401,7 +401,7 @@
     el.querySelectorAll('[data-kick]').forEach((b) => b.addEventListener('click', async () => {
       const x = WD.user(b.dataset.kick);
       if (!(await WD.ui.confirm('세션 강제 종료', `${x.name}님의 모든 로그인 세션을 즉시 종료합니다.`))) return;
-      WD.tx((d) => { const n = WD.auth.revokeAll(d, x.id, 'ADMIN'); WD.audit('SESSION_REVOKE', { type: 'user', id: x.id, name: x.name }, `관리자 강제 종료 ${n}개`); });
+      WD.tx((d) => { const n = WD.auth.revokeAll(d, x.id, 'ceo'); WD.audit('SESSION_REVOKE', { type: 'user', id: x.id, name: x.name }, `관리자 강제 종료 ${n}개`); });
       WD.ui.toast('세션을 종료했습니다.'); WD.app.refresh();
     }));
     el.querySelectorAll('[data-pw]').forEach((b) => b.addEventListener('click', () => {
@@ -413,22 +413,23 @@
           if (pw.length < 8) throw new Error('비밀번호는 8자 이상이어야 합니다.');
           if (pw !== w.querySelector('[data-p2]').value) throw new Error('비밀번호가 서로 다릅니다.');
           const h = await WD.sha256('wooridoori::' + pw);
-          WD.tx((d) => { const t = d.users.find((y) => y.id === x.id); t.pwHash = h; if (x.id !== u.id) WD.auth.revokeAll(d, x.id, 'ADMIN'); WD.audit('USER_CREATE', { type: 'user', id: x.id, name: x.name }, '비밀번호 변경/재설정'); });
+          WD.tx((d) => { const t = d.users.find((y) => y.id === x.id); t.pwHash = h; if (x.id !== u.id) WD.auth.revokeAll(d, x.id, 'ceo'); WD.audit('USER_CREATE', { type: 'user', id: x.id, name: x.name }, '비밀번호 변경/재설정'); });
           WD.ui.toast('비밀번호를 저장했습니다.'); WD.app.refresh();
         } });
     }));
     const form = (x = null) => WD.ui.modal({ title: x ? `계정 수정 · ${x.name}` : '계정 등록', okText: x ? '저장' : '등록', size: 'md',
       body: `<div class="grid2"><label class="fld"><span>이름</span><input data-k="name" value="${esc(x?.name || '')}"></label><label class="fld"><span>이메일 (로그인 ID)</span><input type="email" data-k="email" value="${esc(x?.email || '')}" ${x ? 'disabled' : ''}></label>
-        <label class="fld"><span>권한</span><select data-k="role"><option value="STAFF" ${x?.role === 'STAFF' ? 'selected' : ''}>직원 — 작성·열람만</option><option value="MANAGER" ${x?.role === 'MANAGER' ? 'selected' : ''}>실장 — 작성·열람만 (관리자 전용 폴더 제외 전체)</option></select></label>
+        <label class="fld"><span>직급</span><select data-k="role">${(u.role === 'ceo' ? ['admin', 'manager', 'staff'] : ['manager', 'staff']).map((r) => `<option value="${r}" ${(x?.role || 'staff') === r ? 'selected' : ''}>${WD.ROLE_LABEL[r]}</option>`).join('')}</select></label>
         <label class="fld"><span>고용 유형</span><select data-k="empType">${['정규직', '위촉강사'].map((t) => `<option ${x?.empType === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
         <label class="fld"><span>부서</span><input data-k="dept" list="depts" value="${esc(x?.dept || '')}" placeholder="예) 교육팀"><datalist id="depts">${[...new Set(WD.db.users.map((y) => y.dept).filter(Boolean))].map((dp) => `<option>${esc(dp)}</option>`).join('')}</datalist></label>
         <label class="fld"><span>직함</span><input data-k="title" value="${esc(x?.title || '')}" placeholder="예) 선생님, 실장"></label>
         <label class="fld"><span>출근 기준</span><input type="time" data-k="workStart" value="${x?.workStart || '09:00'}"></label><label class="fld"><span>퇴근 기준</span><input type="time" data-k="workEnd" value="${x?.workEnd || '18:00'}"></label>
         ${x ? '' : '<label class="fld full"><span>초기 비밀번호 (8자 이상)</span><input type="password" data-k="pw" autocomplete="new-password"></label>'}</div>
-        <p class="tiny muted">실장·직원은 문서 작성·열람만 가능하며 파일 다운로드·PDF/엑셀 내보내기·복사·인쇄가 차단됩니다.</p>`,
+        <p class="tiny muted">대표 외 직급은 문서 작성·열람만 가능하며 다운로드·PDF/엑셀 내보내기·복사·인쇄가 차단됩니다. 관리자는 실장·직원 계정 발급·비활성화만 할 수 있습니다.</p>`,
       onOk: async (w) => {
         const v = {}; w.querySelectorAll('[data-k]').forEach((i) => (v[i.dataset.k] = i.value.trim()));
         if (!v.name) throw new Error('이름을 입력하세요.');
+        if (u.role !== 'ceo' && !['manager', 'staff'].includes(v.role)) throw new Error('관리자는 실장·직원 계정만 다룰 수 있습니다.');
         if (x) {
           WD.tx((d) => { const t = d.users.find((y) => y.id === x.id); const before = t.role; Object.assign(t, { name: v.name, role: v.role, empType: v.empType, dept: v.dept, title: v.title, workStart: v.workStart, workEnd: v.workEnd }); WD.audit('USER_CREATE', { type: 'user', id: t.id, name: t.name }, `계정 수정${before !== v.role ? ` · 권한 ${WD.ROLE_LABEL[before]} → ${WD.ROLE_LABEL[v.role]}` : ''}`); });
           WD.ui.toast('저장했습니다.'); WD.app.refresh(); return;
@@ -438,7 +439,7 @@
         if (WD.db.users.some((y) => (y.email || '').toLowerCase() === email)) throw new Error('이미 등록된 이메일입니다.');
         if ((v.pw || '').length < 8) throw new Error('초기 비밀번호는 8자 이상이어야 합니다.');
         const pwHash = await WD.sha256('wooridoori::' + v.pw);
-        WD.tx((d) => { const nu = { id: WD.uid('u'), loginId: email, email, name: v.name, role: v.role, title: v.title || (v.role === 'MANAGER' ? '실장' : '선생님'), empType: v.empType, dept: v.dept || '미지정', joinedAt: WD.ymd(), phone: '', workStart: v.workStart || '09:00', workEnd: v.workEnd || '18:00', pwHash, status: 'ACTIVE', createdAt: WD.now() }; d.users.push(nu); WD.audit('USER_CREATE', { type: 'user', id: nu.id, name: nu.name }, `${WD.ROLE_LABEL[nu.role]} · ${nu.empType} · ${nu.dept}`); });
+        WD.tx((d) => { const nu = { id: WD.uid('u'), loginId: email, email, name: v.name, role: v.role, title: v.title || ({ admin: '관리자', manager: '실장', staff: '선생님' }[v.role]), empType: v.empType, dept: v.dept || '미지정', joinedAt: WD.ymd(), phone: '', workStart: v.workStart || '09:00', workEnd: v.workEnd || '18:00', pwHash, status: 'ACTIVE', createdAt: WD.now() }; d.users.push(nu); WD.audit('USER_CREATE', { type: 'user', id: nu.id, name: nu.name }, `${WD.ROLE_LABEL[nu.role]} · ${nu.empType} · ${nu.dept}`); });
         WD.ui.toast('계정을 등록했습니다. 이메일과 초기 비밀번호를 본인에게 전달하세요.'); WD.app.refresh();
       } });
     el.querySelector('[data-add]').addEventListener('click', () => form());

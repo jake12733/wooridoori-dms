@@ -33,7 +33,7 @@
     WD.app.onCleanup(() => ch.destroy());
   }
 
-  V.dashboard = async (el, p, q, u) => (u.role === 'ADMIN' ? ceoDash(el, u) : staffDash(el, u));
+  V.dashboard = async (el, p, q, u) => (u.role === 'ceo' ? ceoDash(el, u) : staffDash(el, u));
 
   function ceoDash(el, u) {
     const db = WD.db;
@@ -46,7 +46,7 @@
     const staff = WD.staffUsers();
     const today = WD.ymd();
     const month = WD.monthKey();
-    const att = db.attendance.filter((a) => a.date.startsWith(month));
+    const attSt = WD.api.attendance.stats(month);
     const docStat = staff.map((x) => { const set = WD.wf.checklistFor(x); const st = set.items.map((it) => WD.wf.submissionStatus(x.id, it).st); return { x, miss: st.filter((s) => s === 'MISSING').length, rev: st.filter((s) => s === 'REVISION' || s === 'EXPIRED').length, review: st.filter((s) => s === 'REVIEW').length, done: st.filter((s) => s === 'DONE').length, total: st.length }; });
     const tot = docStat.reduce((a, s) => ({ miss: a.miss + s.miss, rev: a.rev + s.rev, review: a.review + s.review }), { miss: 0, rev: 0, review: 0 });
     const unsigned = db.contracts.filter((c) => c.status === 'SENT' || c.status === 'SIGNED');
@@ -71,9 +71,9 @@
         <section class="card"><div class="card-head"><h3>${I('list')} 필수 서류 누락·보완</h3><a href="#/checklist" class="link">체크리스트</a></div>
           <div class="tri"><div><b class="t-danger">${tot.miss}</b><small>미제출</small></div><div><b class="t-warn">${tot.rev}</b><small>보완 대기</small></div><div><b>${tot.review}</b><small>검토 중</small></div></div>
           <ul class="mini-list compact">${docStat.map((s) => `<li><div class="row gap-s center">${WD.ui.avatar(s.x, 22)}<b>${esc(s.x.name)}</b></div><div class="progress sm"><span style="width:${(s.total ? Math.round((s.done / s.total) * 100) : 100)}%"></span></div><small>${s.done}/${s.total}${s.miss ? ` · <span class="t-danger">미제출 ${s.miss}</span>` : ''}${s.rev ? ` · <span class="t-warn">보완 ${s.rev}</span>` : ''}</small></li>`).join('')}</ul></section>
-        <section class="card"><div class="card-head"><h3>${I('clock')} 근태 요약 (${+month.slice(5)}월)</h3><a href="#/attendance" class="link">상세</a></div>
-          <table class="tbl compact"><thead><tr><th>직원</th><th class="c">오늘</th><th class="c">지각</th><th class="c">조퇴</th><th class="c">병가·휴가</th><th class="c">대강</th></tr></thead><tbody>
-          ${staff.map((x) => { const mine = att.filter((a) => a.userId === x.id); const t = db.attendance.find((a) => a.userId === x.id && a.date === today); const c = (s) => mine.filter((a) => s.includes(a.status)).length; return `<tr><td>${esc(x.name)}</td><td class="c">${t ? `<span class="badge ${t.status === '근무' ? 'st-approved' : 'st-pending'}">${t.status}</span>` : '<span class="muted">-</span>'}</td><td class="c">${c(['지각']) || '-'}</td><td class="c">${c(['조퇴']) || '-'}</td><td class="c">${c(['병가', '휴가']) || '-'}</td><td class="c">${c(['대강']) || '-'}</td></tr>`; }).join('')}</tbody></table></section>
+        <section class="card"><div class="card-head"><h3>${I('clock')} 근태 요약 (${+month.slice(5)}월)</h3><a href="#/attendance" class="link">관리</a></div>
+          <table class="tbl compact"><thead><tr><th>이름</th><th>직급</th><th class="c">출석</th><th class="c">지각</th><th class="c">병가·휴가</th><th class="c">대강</th></tr></thead><tbody>
+          ${attSt.people.map((pp) => `<tr><td>${esc(pp.user.name)}</td><td>${WD.roleBadge(pp.user.role)}</td><td class="c">${pp.출석}</td><td class="c">${pp.지각 || '-'}</td><td class="c">${(pp.병가 + pp.휴가) || '-'}</td><td class="c">${pp.대강 || '-'}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">등록된 직원이 없습니다.</td></tr>'}</tbody></table></section>
         <section class="card"><div class="card-head"><h3>${I('contract')} 계약 진행</h3><a href="#/contracts" class="link">관리</a></div>
           <ul class="mini-list">${unsigned.map((c) => `<li><a href="#/contract/${c.id}">${I('contract')}<span><b>${esc(c.title)}</b><small>${c.status === 'SENT' ? '직원 서명 대기' : '직원 서명 완료 → 직인 필요'}</small></span></a></li>`).join('') || '<li class="muted pad">진행 중인 계약이 없습니다.</li>'}</ul>
           <div class="sec-sum">${I('audit')} 최근 30일 보안 차단 이벤트 <b>${security}</b>건 <a href="#/audit?f=deny" class="link">로그</a></div></section>
@@ -87,7 +87,7 @@
   function staffDash(el, u) {
     const db = WD.db;
     const today = WD.ymd();
-    const t = db.attendance.find((a) => a.userId === u.id && a.date === today);
+    const t = WD.api.attendance.mine({ date: today })[0];
     const notes = db.notifications.filter((n) => n.userId === u.id).slice(0, 6);
     const myDocs = db.documents.filter((d) => d.ownerId === u.id || d.assigneeId === u.id).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
     const set = WD.wf.checklistFor(u);
@@ -97,13 +97,13 @@
     const alerts = WD.wf.expiryAlerts(u.id);
     const sentContract = db.contracts.find((c) => c.userId === u.id && c.status === 'SENT');
     el.innerHTML = `<div class="page">
-      <div class="page-head"><div><small class="muted">${today}</small><h1>${esc(u.name)} ${esc(u.title)}님, 안녕하세요</h1><p class="muted">${esc(u.dept)} · ${esc(u.empType)} · 문서 작성·열람만 가능하며 파일 다운로드·PDF/엑셀 내보내기는 최고 관리자만 가능합니다.</p></div>
+      <div class="page-head"><div><small class="muted">${today}</small><h1>${esc(u.name)} ${esc(u.title)}님, 안녕하세요</h1><p class="muted">${esc(u.dept)} · ${esc(u.empType)} · 문서 작성·열람만 가능하며 파일 다운로드·PDF/엑셀 내보내기는 대표만 가능합니다.</p></div>
         <div class="row gap-s"><a class="btn primary" href="#/templates">${I('plus')} 새 문서</a></div></div>
       ${sentContract ? `<div class="alert alert-warn">${I('pen')}<span><b>계약서 서명 요청</b> ${esc(sentContract.title)} — <a href="#/contract/${sentContract.id}">지금 확인하고 전자서명하기</a></span></div>` : ''}
       ${alerts.map((a) => `<div class="alert alert-info slim">${I('alert')}<span>[${a.bucket}] ${a.kind}: ${esc(a.title)} (만료일 ${a.end})</span></div>`).join('')}
       <div class="dash-grid">
         <section class="card"><div class="card-head"><h3>${I('clock')} 오늘 출결</h3><a href="#/attendance" class="link">근태</a></div>
-          <div class="today-att">${t ? `<span class="badge st-approved">${t.status}</span><p>출근 <b>${t.in || '-'}</b> · 퇴근 <b>${t.out || '-'}</b></p>` : '<p class="muted">아직 출근 기록이 없습니다.</p>'}<a class="btn ${t?.in ? 'ghost' : 'primary'} block" href="#/attendance">${t?.in ? (t.out ? '기록 보기' : '퇴근하기') : '출근하기'}</a></div></section>
+          <div class="today-att">${t ? `<span class="badge st-approved">${t.status}</span><p>${t.time} 등록</p>` : '<p class="muted">아직 오늘 근태를 체크하지 않았어요.</p>'}<a class="btn ${t ? 'ghost' : 'primary'} block" href="#/attendance">${t ? '근태 화면 열기' : '지금 체크하기'}</a></div></section>
         <section class="card"><div class="card-head"><h3>${I('list')} 내 필수 서류</h3><a href="#/checklist" class="link">제출하기</a></div>
           <div class="big-pct"><b>${pctDone}%</b><small>${done}/${items.length} 완료</small></div><div class="progress"><span style="width:${pctDone}%"></span></div>
           <ul class="mini-list compact">${items.filter((i) => i.st !== 'DONE').map((i) => `<li><span>${esc(i.it.name)}</span>${WD.ui.subStatus(i.st)}</li>`).join('') || '<li class="t-ok">모두 제출 완료</li>'}</ul></section>

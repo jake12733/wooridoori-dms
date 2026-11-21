@@ -1,75 +1,94 @@
 /* =========================================================================
- * 초기 구성 (샘플 데이터 없음)
- * - 첫 실행 시 빈 DB + 기본 폴더 구조(인사·문서·회계·보안) + 기본 필수 서류 세트만 생성
- * - 사용자·문서·계약·근태·장부·템플릿은 최고 관리자/실장이 직접 등록·작성
- * - 이전 데모 버전(schemaVersion < 5) 데이터는 자동 삭제
+ * 초기 구성 · 데이터 마이그레이션 (샘플 데이터 없음)
+ * - 4단계 직급: 'ceo'(대표) · 'admin'(관리자) · 'manager'(실장) · 'staff'(직원)
+ * - 문서 분류(단일 카테고리): 인사·직원 / 수업·운영 / 회계·정산 / 🔒 대표 전용
+ * - v5(이전 버전) 데이터는 자동 변환 — 문서·계정·근태 유지
  * ========================================================================= */
 (function () {
   const WD = window.WD;
-  const SCHEMA_VERSION = 5;
+  const SCHEMA_VERSION = 6;
+
+  // 분류별 직급 권한 (ceo는 항상 전체)
+  WD.CATEGORIES = [
+    { id: 'c_hr', name: '인사·직원', color: '#2f7d62', access: { admin: 'edit', manager: 'edit', staff: 'none' }, legal: true },
+    { id: 'c_ops', name: '수업·운영', color: '#3c6fb4', access: { admin: 'edit', manager: 'edit', staff: 'edit' } },
+    { id: 'c_acc', name: '회계·정산', color: '#c98a1e', access: { admin: 'edit', manager: 'edit', staff: 'view' }, legal: true },
+    { id: 'c_ceo', name: '대표 전용', color: '#b2453a', access: { admin: 'none', manager: 'none', staff: 'none' }, ceoOnly: true },
+  ];
+  const folders = () => WD.CATEGORIES.map((c) => ({ ...c, parentId: null }));
+
+  const checklistSets = () => [
+    { id: 'cs_reg', empType: '정규직', items: [
+      { code: 'emp_contract', name: '근로계약서', source: 'contract' }, { code: 'resident', name: '주민등록등본' }, { code: 'bank', name: '통장 사본' },
+      { code: 'insurance', name: '4대보험 취득 신고 서류' }, { code: 'privacy', name: '개인정보 수집·이용 동의서' }, { code: 'security', name: '보안서약서' },
+      { code: 'health', name: '건강진단결과서(보건증)', expiry: true }] },
+    { id: 'cs_inst', empType: '위촉강사', items: [
+      { code: 'inst_contract', name: '위촉계약서', source: 'contract' }, { code: 'resume', name: '강사 이력서' }, { code: 'license', name: '자격증 사본' },
+      { code: 'crime', name: '성범죄 경력 조회 동의서', expiry: true }, { code: 'abuse', name: '아동학대 범죄전력 조회 동의서' }, { code: 'bank', name: '통장 사본' },
+      { code: 'privacy', name: '개인정보 수집·이용 동의서' }, { code: 'security', name: '보안서약서' }] },
+  ];
 
   function emptyDb() {
-    const folders = [
-      { id: 'f_hr', name: '인사', parentId: null, staffAccess: 'none', color: '#2f7d62' },
-      { id: 'f_hr_emp', name: '근로계약', parentId: 'f_hr', staffAccess: 'none', legal: true },
-      { id: 'f_hr_inst', name: '위촉계약', parentId: 'f_hr', staffAccess: 'none', legal: true },
-      { id: 'f_hr_rec', name: '인사기록·제출서류', parentId: 'f_hr', staffAccess: 'none', legal: true },
-      { id: 'f_hr_cert', name: '증명서·확인서', parentId: 'f_hr', staffAccess: 'view' },
-      { id: 'f_doc', name: '문서', parentId: null, staffAccess: 'edit', color: '#3c6fb4' },
-      { id: 'f_doc_notice', name: '공문·안내문', parentId: 'f_doc', staffAccess: 'edit' },
-      { id: 'f_doc_report', name: '보고서', parentId: 'f_doc', staffAccess: 'edit' },
-      { id: 'f_doc_attend', name: '출석부', parentId: 'f_doc', staffAccess: 'edit' },
-      { id: 'f_doc_minutes', name: '회의록', parentId: 'f_doc', staffAccess: 'view' },
-      { id: 'f_acc', name: '회계', parentId: null, staffAccess: 'view', color: '#c98a1e' },
-      { id: 'f_acc_sales', name: '매출', parentId: 'f_acc', staffAccess: 'none' },
-      { id: 'f_acc_exp', name: '지출·증빙', parentId: 'f_acc', staffAccess: 'edit', legal: true },
-      { id: 'f_acc_settle', name: '정산', parentId: 'f_acc', staffAccess: 'edit', legal: true },
-      { id: 'f_sec', name: '보안', parentId: null, staffAccess: 'none', color: '#b2453a' },
-      { id: 'f_sec_pledge', name: '보안서약', parentId: 'f_sec', staffAccess: 'view' },
-      { id: 'f_sec_privacy', name: '개인정보', parentId: 'f_sec', staffAccess: 'none' },
-    ];
-    // 기본 필수 서류 세트 (필수 서류 체크리스트 > 세트 설정에서 수정 가능)
-    const checklistSets = [
-      { id: 'cs_reg', empType: '정규직', items: [
-        { code: 'emp_contract', name: '근로계약서', source: 'contract' }, { code: 'resident', name: '주민등록등본' }, { code: 'bank', name: '통장 사본' },
-        { code: 'insurance', name: '4대보험 취득 신고 서류' }, { code: 'privacy', name: '개인정보 수집·이용 동의서' }, { code: 'security', name: '보안서약서' },
-        { code: 'health', name: '건강진단결과서(보건증)', expiry: true }] },
-      { id: 'cs_inst', empType: '위촉강사', items: [
-        { code: 'inst_contract', name: '위촉계약서', source: 'contract' }, { code: 'resume', name: '강사 이력서' }, { code: 'license', name: '자격증 사본' },
-        { code: 'crime', name: '성범죄 경력 조회 동의서', expiry: true }, { code: 'abuse', name: '아동학대 범죄전력 조회 동의서' }, { code: 'bank', name: '통장 사본' },
-        { code: 'privacy', name: '개인정보 수집·이용 동의서' }, { code: 'security', name: '보안서약서' }] },
-    ];
-    const presets = [
-      { id: 'p_admin', name: '최고 관리자에게 결재·제출', action: 'SUBMIT_CEO', icon: 'stamp' },
-      { id: 'p_all', name: '전체 직원 공지 발송', action: 'BROADCAST', icon: 'megaphone' },
-    ];
     return {
       schemaVersion: SCHEMA_VERSION, createdAt: WD.now(), orgName: WD.ORG,
-      users: [], sessions: [], folders, documents: [], versions: [], wfEvents: [], dispatches: [], presets, notifications: [],
-      templates: [], checklistSets, submissions: [], contracts: [], attendance: [], finance: [], launchers: [], auditLogs: [], alertSent: [],
+      users: [], sessions: [], folders: folders(), documents: [], versions: [], wfEvents: [], dispatches: [],
+      presets: [
+        { id: 'p_ceo', name: '대표에게 결재·제출', action: 'SUBMIT_CEO', icon: 'stamp' },
+        { id: 'p_all', name: '전체 직원 공지 발송', action: 'BROADCAST', icon: 'megaphone' },
+      ],
+      notifications: [], templates: [], checklistSets: checklistSets(), submissions: [], contracts: [], attendance: [], finance: [], launchers: [], auditLogs: [], alertSent: [],
     };
   }
 
-  /** 첫 실행 또는 이전 데모 데이터 → 빈 초기 구성 */
+  /** v5 → v6 변환: 직급 코드, 2단계 폴더 → 단일 분류, 근태 형식 */
+  function migrate5(db) {
+    const ROLE = { ADMIN: 'ceo', ceo: 'ceo', MANAGER: 'manager', STAFF: 'staff', RESIGNED: 'staff' };
+    db.users.forEach((u) => {
+      const base = u.role === 'RESIGNED' ? (u.prevRole || 'STAFF') : u.role;
+      u.role = ROLE[base] || 'staff';
+      if (u.status !== 'ACTIVE') u.status = 'RESIGNED';
+    });
+    const FMAP = (fid) => {
+      if (!fid) return 'c_ops';
+      if (fid === 'f_acc_sales' || fid === 'f_sec' || fid === 'f_sec_privacy') return 'c_ceo';
+      if (fid.startsWith('f_hr') || fid === 'f_sec_pledge') return 'c_hr';
+      if (fid.startsWith('f_acc')) return 'c_acc';
+      return 'c_ops';
+    };
+    db.documents.forEach((d) => { d.folderId = FMAP(d.folderId); });
+    db.contracts.forEach((c) => { c.folderId = 'c_hr'; });
+    db.presets.forEach((p) => { if (p.folderId) p.folderId = FMAP(p.folderId); if (p.action === 'SUBMIT_CEO') p.name = '대표에게 결재·제출'; });
+    db.dispatches.forEach((x) => { if (x.folderId) x.folderId = FMAP(x.folderId); });
+    db.folders = folders();
+    db.attendance = (db.attendance || []).map((a) => ({
+      id: a.id, userId: a.userId, date: a.date, time: a.in || a.time || '', status: a.status === '근무' ? '출석' : (a.status === '조퇴' ? '출석' : a.status),
+      note: [a.note, a.status === '조퇴' ? '조퇴' : '', a.subFor ? `${WD.userName(a.subFor)} 대강` : ''].filter(Boolean).join(' · '),
+      approved: true, approvedBy: null, createdAt: a.createdAt || WD.now(), locked: true,
+    }));
+    db.schemaVersion = SCHEMA_VERSION;
+    return db;
+  }
+
   WD.seedIfEmpty = async () => {
     WD.load();
     if (WD.db && WD.db.schemaVersion === SCHEMA_VERSION) return false;
+    if (WD.db && WD.db.schemaVersion === 5) { WD.db = migrate5(WD.db); WD.save(); return true; }
     const hadOld = !!WD.db;
     WD.db = emptyDb(); WD.save();
     localStorage.setItem(WD.VAULT_KEY, JSON.stringify({ records: [] }));
     if (hadOld) { try { await WD.files.clear(); } catch (e) { /* noop */ } sessionStorage.removeItem('wd_sid'); }
     return true;
   };
-  WD.needsSetup = () => { WD.load(); return !WD.db || !WD.db.users.some((u) => u.role === 'ADMIN' && u.status === 'ACTIVE'); };
+  WD.needsSetup = () => { WD.load(); return !WD.db || !WD.db.users.some((u) => u.role === 'ceo' && u.status === 'ACTIVE'); };
 
-  /** 최초 최고 관리자 계정 생성 (관리자가 하나도 없을 때만) */
+  /** 최초 대표 계정 생성 (대표가 하나도 없을 때만) */
   WD.createFirstAdmin = async ({ name, email, password, title }) => {
-    if (!WD.needsSetup()) throw new Error('이미 최고 관리자 계정이 있습니다.');
+    if (!WD.needsSetup()) throw new Error('이미 대표 계정이 있습니다.');
     const pwHash = await WD.sha256('wooridoori::' + password);
     return WD.tx((db) => {
-      const u = { id: WD.uid('u'), loginId: email, email, name, role: 'ADMIN', title: title || '대표', empType: '정규직', dept: '경영지원', joinedAt: WD.ymd(), phone: '', workStart: '09:00', workEnd: '18:00', pwHash, status: 'ACTIVE', createdAt: WD.now() };
+      const u = { id: WD.uid('u'), loginId: email, email, name, role: 'ceo', title: title || '원장', empType: '정규직', dept: '경영', joinedAt: WD.ymd(), phone: '', workStart: '09:00', workEnd: '18:00', pwHash, status: 'ACTIVE', createdAt: WD.now() };
       db.users.push(u);
-      WD.audit('USER_CREATE', { type: 'user', id: u.id, name: u.name, actorName: u.name }, '최초 최고 관리자 계정 생성');
+      WD.audit('USER_CREATE', { type: 'user', id: u.id, name: u.name, actorName: u.name }, '최초 대표 계정 생성');
       return u;
     });
   };
