@@ -22,6 +22,7 @@
     // 직원·계정 관리(메인) > 출결·근태(서브)
     { path: '/people', label: '직원·계정 관리', icon: 'users', roles: CEO },
     { path: '/attendance', label: '출결·근태', icon: 'clock', roles: CEO, sub: true, parent: '/people' },
+    { path: '/attendance/me', label: '내 출결 체크', icon: 'check', roles: ['admin'], sub: true, parent: '/people' }, // 관리자 본인 출결 (대표는 출결 없음)
     { sec: '🔒 대표 전용', roles: CEO },
     { path: '/finance', label: '경영·매출 장부', icon: 'chart', roles: CEO },
     { path: '/docs/c_ceo', label: '대표 전용 보안 폴더', icon: 'lock', roles: CEO },
@@ -34,7 +35,7 @@
   const ROUTES = [
     ['/dashboard', 'dashboard', CEO], ['/docs', 'docs', ALL], ['/docs/:folder', 'docs', ALL], ['/doc/:id', 'docView', ALL], ['/new/:kind', 'newDoc', ALL],
     ['/templates', 'templates', ALL], ['/inbox', 'inbox', ALL], ['/workflow', 'workflow', CEO], ['/checklist', 'checklist', CHECK],
-    ['/contracts', 'contracts', CEO], ['/contract/:id', 'contract', CEO], ['/attendance', 'attendance', ALL],
+    ['/contracts', 'contracts', CEO], ['/contract/:id', 'contract', CEO], ['/attendance', 'attendance', ALL], ['/attendance/me', 'attendanceMe', ['admin']],
     ['/finance', 'finance', CEO], ['/people', 'people', CEO], ['/vault', 'vault', CEO], ['/audit', 'audit', CEO], ['/launcher', 'launcher', CEO],
     ['/system', 'system', CEO],
   ];

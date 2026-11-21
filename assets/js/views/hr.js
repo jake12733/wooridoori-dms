@@ -332,9 +332,11 @@
   const attBadge = (s) => `<span class="badge ${ACLS[s] || ''}">${s}</span>`;
 
   V.attendance = (el, p, q, u) => (WD.isTop(u) ? attendanceCEO(el, q, u) : attendanceSelf(el, q, u));
+  /** 관리자 본인 출결 체크 (직원·계정 관리 > 내 출결 체크) — 직원과 같은 화면 */
+  V.attendanceMe = (el, p, q, u) => { attendanceSelf(el, q, u, '#/attendance/me'); el.querySelector('.page')?.insertAdjacentHTML('afterbegin', '<div class="crumb" style="text-align:left"><a href="#/people">직원·계정 관리</a> / 내 출결 체크</div>'); };
 
   /** 관리자·실장·직원: 큰 버튼 5개 + 사유 + 달력(날짜 선택) + 선택한 날짜 내 기록(잠금) — 타인 기록·통계는 API에서 아예 내려오지 않음 */
-  function attendanceSelf(el, q, u) {
+  function attendanceSelf(el, q, u, base = '#/attendance') {
     const today = WD.ymd();
     const sel = /^\d{4}-\d{2}-\d{2}$/.test(q.d || '') ? q.d : today;
     const month = /^\d{4}-\d{2}$/.test(q.m || '') ? q.m : sel.slice(0, 7);
@@ -355,7 +357,7 @@
     for (let d = 1; d <= days; d++) {
       const date = `${month}-${WD.pad(d)}`; const w = new Date(Y, M - 1, d).getDay();
       const recs = monthRecs.filter((a) => a.date === date);
-      cells.push(`<a class="cal-cell ${date === today ? 'today' : ''} ${date === sel ? 'sel' : ''} ${w === 0 ? 'sun' : w === 6 ? 'sat' : ''} ${date > today ? 'future' : ''}" href="#/attendance?m=${month}&d=${date}">
+      cells.push(`<a class="cal-cell ${date === today ? 'today' : ''} ${date === sel ? 'sel' : ''} ${w === 0 ? 'sun' : w === 6 ? 'sat' : ''} ${date > today ? 'future' : ''}" href="${base}?m=${month}&d=${date}">
         <span class="cal-day">${d}</span>
         <span class="cal-chips">${recs.map((a) => `<span class="cal-chip ${ACLS[a.status] || ''}" title="${esc(a.status + (a.note ? ' · ' + a.note : ''))}">${a.status}</span>`).join('')}</span></a>`);
     }
@@ -365,7 +367,7 @@
       <div class="att-hero">
         <small class="muted">${today} (${dowName[new Date().getDay()]})</small>
         <h1 class="att-clock" id="att-clock">${WD.hm()}</h1>
-        <p class="muted">${esc(u.name)} ${WD.roleBadge(u.role)} · ${isToday ? '오늘 상태를 눌러 주세요' : `<b class="sel-date">${selLabel}</b> 기록을 등록합니다 <a href="#/attendance">오늘로 돌아가기</a>`}</p>
+        <p class="muted">${esc(u.name)} ${WD.roleBadge(u.role)} · ${isToday ? '오늘 상태를 눌러 주세요' : `<b class="sel-date">${selLabel}</b> 기록을 등록합니다 <a href="${base}">오늘로 돌아가기</a>`}</p>
       </div>
       <div class="att-buttons">${WD.ATT_TYPES.map((t) => `<button class="att-btn ${t.cls}" data-att="${t.key}" ${allowed(t.key) ? '' : 'disabled title="앞으로의 날짜에는 휴가·병가·대강만 등록할 수 있어요"'}>${I(t.icon)}<b>${t.key}</b><small>${t.desc}</small></button>`).join('')}</div>
       <div class="att-reason"><input id="att-note" maxlength="80" placeholder="사유 (병가·휴가·대강은 꼭 적어 주세요. 예: 감기 / 연차 / 3교시 김선생님 대신)"></div>
@@ -375,7 +377,7 @@
       </div>
       <div class="card att-cal">
         <div class="card-head"><h3>${I('clock')} 내 출결 달력</h3>
-          <div class="seg"><a href="#/attendance?m=${prevM}&d=${sel}">‹</a><span class="seg-label">${Y}년 ${M}월</span><a href="#/attendance?m=${nextM}&d=${sel}">›</a></div></div>
+          <div class="seg"><a href="${base}?m=${prevM}&d=${sel}">‹</a><span class="seg-label">${Y}년 ${M}월</span><a href="${base}?m=${nextM}&d=${sel}">›</a></div></div>
         <div class="cal-sum">${WD.ATT_TYPES.map((t) => `<span class="cal-chip ${t.cls}">${t.key} ${cnt(t.key)}</span>`).join('')}<small class="muted">이번 달 내 기록</small></div>
         <div class="cal-grid">${['일', '월', '화', '수', '목', '금', '토'].map((d, i) => `<div class="cal-head ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${d}</div>`).join('')}${cells.join('')}</div>
         <p class="tiny muted">날짜를 누르면 그날 한 일을 보고, 위 버튼으로 그 날짜의 출결을 등록할 수 있어요. 지난 날짜는 '나중 등록'으로 대표 확인을 거칩니다.</p>

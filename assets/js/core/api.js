@@ -36,7 +36,7 @@
       stats(month) {
         const u = me(); if (!WD.isTop(u)) deny('attendance.stats');
         const rows = WD.db.attendance.filter((a) => a.date.startsWith(month));
-        const people = WD.staffUsers();
+        const people = WD.db.users.filter((x) => x.status === 'ACTIVE' && WD.effectiveRole(x) !== 'ceo'); // 대표 제외 전원 (관리자 포함)
         const per = people.map((p) => {
           const r = rows.filter((a) => a.userId === p.id);
           const c = (s) => r.filter((a) => a.status === s).length;
