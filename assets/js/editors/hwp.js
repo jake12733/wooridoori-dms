@@ -39,6 +39,11 @@
         const r = await editor.loadFile(await rec.blob.arrayBuffer(), name);
         status.innerHTML = `${WD.icon('hwp')} ${WD.esc(name)} · ${r?.pageCount ?? '?'}쪽 · rhwp WASM 엔진`;
       } else {
+        // 새 문서: 빈 HWP 양식을 명시적으로 불러옴 (rhwp 복구본 대화상자에 가려 문서가 없는 상태 방지)
+        try {
+          const blank = await (await fetch('assets/blank.hwp?v=1')).arrayBuffer();
+          await editor.loadFile(blank, '새 문서.hwp', { skipUnsavedGuard: true });
+        } catch (e) { console.warn('빈 문서 로드 실패', e); }
         status.innerHTML = `${WD.icon('hwp')} 새 한글 문서 · rhwp WASM 엔진 — 작성 후 [새 버전 저장]을 누르세요.`;
       }
 
