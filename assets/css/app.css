@@ -859,3 +859,12 @@ body.preview-on .topbar { background: #fffaf0; }
 }
 .login-hero > * { position: relative; z-index: 1; }
 @media (max-width: 900px) { .login-hero::before { background-size: 320px; background-position: right -60px bottom -40px; } }
+
+/* v12 — 런처 브랜드 아이콘 */
+.launch-ico.brand { background: none !important; padding: 0; overflow: hidden; box-shadow: 0 2px 6px rgba(0,0,0,.12); }
+.launch-ico.brand svg { width: 100%; height: 100%; display: block; }
+.launch-ico.fav { position: relative; overflow: hidden; }
+.launch-ico.fav img { position: absolute; inset: 0; width: 100%; height: 100%; padding: 7px; background: #fff; border-radius: inherit; object-fit: contain; z-index: 1; }
+.launch-ico { width: 44px; height: 44px; }
+.launch-mini .launch-ico { width: 28px; height: 28px; border-radius: 8px; font-size: 12px; }
+.launch-mini .launch-ico.fav img { padding: 4px; }

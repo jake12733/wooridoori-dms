@@ -16,7 +16,29 @@
   const short = (n) => { const a = Math.abs(n); return (n < 0 ? '-' : '') + (a >= 1e8 ? (a / 1e8).toFixed(2) + '억' : a >= 1e4 ? Math.round(a / 1e4).toLocaleString('ko-KR') + '만' : a.toLocaleString('ko-KR')); };
   WD.shortWon = short;
 
-  WD.launcherGrid = (items) => !items.length ? `<p class="muted">등록된 바로가기가 없습니다. <a href="#/launcher">원클릭 런처</a>에서 블로그·인스타그램·거래처·업무 포털을 추가하세요.</p>` : `<div class="launcher-grid">${items.map((l) => `<a class="launch" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer" title="${esc(l.url)}"><span class="launch-ico" style="background:${esc(l.color || '#2f7d62')}">${esc(l.name.slice(0, 1))}</span><b>${esc(l.name)}</b><small>${esc(l.category || '')}</small></a>`).join('')}</div>`;
+  /* ---------- 원클릭 런처 아이콘: 인스타그램·네이버 블로그는 실제 브랜드 로고, 그 외 사이트는 사이트 파비콘 ---------- */
+  const BRAND_ICONS = {
+    instagram: `<svg viewBox="0 0 64 64" aria-label="Instagram"><defs><radialGradient id="igG" cx="0.3" cy="1.07" r="1.25"><stop offset="0" stop-color="#fdf497"/><stop offset="0.05" stop-color="#fdf497"/><stop offset="0.45" stop-color="#fd5949"/><stop offset="0.6" stop-color="#d6249f"/><stop offset="0.9" stop-color="#285AEB"/></radialGradient></defs><rect width="64" height="64" rx="15" fill="url(#igG)"/><rect x="14" y="14" width="36" height="36" rx="11" fill="none" stroke="#fff" stroke-width="4.2"/><circle cx="32" cy="32" r="8.6" fill="none" stroke="#fff" stroke-width="4.2"/><circle cx="42.6" cy="21.4" r="2.7" fill="#fff"/></svg>`,
+    naverBlog: `<svg viewBox="0 0 64 64" aria-label="NAVER blog"><rect width="64" height="64" rx="15" fill="#03C75A"/><path d="M14 18h36a5 5 0 0 1 5 5v15a5 5 0 0 1-5 5H37l-5 6-5-6H14a5 5 0 0 1-5-5V23a5 5 0 0 1 5-5z" fill="#fff"/><text x="32" y="36.2" text-anchor="middle" font-family="Arial Black, Arial, sans-serif" font-weight="900" font-size="13.5" fill="#03C75A" letter-spacing="-.6">blog</text></svg>`,
+    naver: `<svg viewBox="0 0 64 64" aria-label="NAVER"><rect width="64" height="64" rx="15" fill="#03C75A"/><path d="M20 18h9.2l6.2 11.3V18H44v28h-9.2l-6.2-11.3V46H20z" fill="#fff"/></svg>`,
+    youtube: `<svg viewBox="0 0 64 64" aria-label="YouTube"><rect width="64" height="64" rx="15" fill="#fff"/><rect x="8" y="16" width="48" height="32" rx="9" fill="#FF0000"/><path d="M27 24.5v15l13-7.5z" fill="#fff"/></svg>`,
+  };
+  const brandOf = (url) => {
+    let h = ''; try { h = new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return null; }
+    if (/(^|\.)instagram\.com$/.test(h)) return 'instagram';
+    if (/^(m\.)?blog\.naver\.com$/.test(h)) return 'naverBlog';
+    if (/(^|\.)naver\.com$/.test(h)) return 'naver';
+    if (/(^|\.)(youtube\.com|youtu\.be)$/.test(h)) return 'youtube';
+    return null;
+  };
+  WD.launcherIcon = (l) => {
+    const b = brandOf(l.url);
+    if (b) return `<span class="launch-ico brand">${BRAND_ICONS[b]}</span>`;
+    let host = ''; try { host = new URL(l.url).hostname; } catch (e) { /* noop */ }
+    const letter = esc((l.name || '?').slice(0, 1));
+    return host ? `<span class="launch-ico fav" style="background:${esc(l.color || '#2f7d62')}"><img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64" alt="" loading="lazy" onerror="this.remove()"><i>${letter}</i></span>` : `<span class="launch-ico" style="background:${esc(l.color || '#2f7d62')}">${letter}</span>`;
+  };
+  WD.launcherGrid = (items) => !items.length ? `<p class="muted">등록된 바로가기가 없습니다. <a href="#/launcher">원클릭 런처</a>에서 블로그·인스타그램·거래처·업무 포털을 추가하세요.</p>` : `<div class="launcher-grid">${items.map((l) => `<a class="launch" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer" title="${esc(l.url)}">${WD.launcherIcon(l)}<b>${esc(l.name)}</b><small>${esc(l.category || '')}</small></a>`).join('')}</div>`;
 
   async function drawChart(canvas, rows) {
     try { await WD.ui.loadScript(WD.ui.LIBS.chart); } catch (e) { canvas.replaceWith(Object.assign(document.createElement('p'), { className: 'muted', textContent: '차트 라이브러리를 불러오지 못했습니다.' })); return; }
