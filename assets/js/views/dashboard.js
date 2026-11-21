@@ -58,15 +58,18 @@
   /* ---------------- 공지사항 (대표·관리자 작성·수정 / 전 직원 열람) ---------------- */
   const noticeList = () => (WD.db.notices || []).slice().sort((a, b) => (b.pinned - a.pinned) || ((b.updatedAt || b.createdAt) > (a.updatedAt || a.createdAt) ? 1 : -1));
   const isNew = (n) => Date.now() - new Date(n.updatedAt || n.createdAt) < 3 * 864e5;
+  const isUnread = (n, uid) => !(n.readBy || []).includes(uid);
+  /** 안 읽은 공지 수 (메뉴 배지) */
+  WD.noticeUnread = (u) => (WD.db?.notices || []).filter((n) => n.authorId !== u.id && isUnread(n, u.id)).length;
 
-  WD.noticeBoardHTML = (u, { manage = false, limit = 0 } = {}) => {
+  WD.noticeBoardHTML = (u, { manage = false, limit = 0, full = false } = {}) => {
     const list = noticeList(); const shown = limit ? list.slice(0, limit) : list;
-    return `<section class="card notice-card ${manage ? 'manage' : 'compact'}">
+    return `<section class="card notice-card ${manage ? 'manage' : 'compact'} ${full ? 'full' : ''}">
       <div class="card-head"><h3>${I('megaphone')} 공지사항 <em class="cnt">${list.length}</em></h3>
         ${manage ? `<button class="btn sm primary" data-notice-new>${I('plus')} 공지 작성</button>` : (list.length > shown.length ? `<button class="btn sm ghost" data-notice-all>전체 보기</button>` : '')}</div>
       ${shown.length ? `<ul class="notice-list">${shown.map((n) => `<li class="${n.pinned ? 'pinned' : ''}">
-        <button class="notice-row" data-notice-open="${n.id}">${n.pinned ? '<span class="pin">📌 고정</span>' : ''}<b>${esc(n.title)}</b>${isNew(n) ? '<span class="new">NEW</span>' : ''}
-          <small>${esc(WD.userName(n.authorId))} · ${WD.fmtDT(n.updatedAt || n.createdAt)}${n.updatedAt && n.updatedAt !== n.createdAt ? ' (수정됨)' : ''}</small></button>
+        <button class="notice-row" data-notice-open="${n.id}">${n.pinned ? '<span class="pin">📌 고정</span>' : ''}<b>${esc(n.title)}</b>${isNew(n) ? '<span class="new">NEW</span>' : ''}${n.authorId !== u.id && isUnread(n, u.id) ? '<span class="unread-dot">안 읽음</span>' : ''}
+          ${full && n.body ? `<span class="notice-preview">${esc(n.body.slice(0, 120))}${n.body.length > 120 ? '…' : ''}</span>` : ''}<small>${esc(WD.userName(n.authorId))} · ${WD.fmtDT(n.updatedAt || n.createdAt)}${n.updatedAt && n.updatedAt !== n.createdAt ? ' (수정됨)' : ''}</small></button>
         ${manage ? `<span class="notice-act"><button class="btn sm ghost" data-notice-edit="${n.id}">수정</button><button class="btn sm ghost icon-only" data-notice-del="${n.id}" title="삭제">${I('trash')}</button></span>` : ''}
       </li>`).join('')}</ul>` : `<p class="muted">${manage ? '아직 공지가 없습니다. [공지 작성]으로 직원들에게 알릴 내용을 올려 보세요.' : '등록된 공지가 없습니다.'}</p>`}
     </section>`;
@@ -91,7 +94,7 @@
           else {
             const t = { id: WD.uid('ntc'), title, body, pinned, authorId: u.id, createdAt: WD.now(), updatedAt: WD.now() };
             db.notices.push(t); WD.audit('TEMPLATE_SAVE', { type: 'notice', id: t.id, name: title }, '공지 작성');
-            if (notify) db.users.filter((x) => x.status === 'ACTIVE' && x.id !== u.id).forEach((x) => WD.notify(x.id, { title: `📢 공지: ${title}`, body: body.slice(0, 80), link: '#/docs?notice=' + t.id, type: 'INFO' }));
+            if (notify) db.users.filter((x) => x.status === 'ACTIVE' && x.id !== u.id).forEach((x) => WD.notify(x.id, { title: `📢 공지: ${title}`, body: body.slice(0, 80), link: '#/notices?open=' + t.id, type: 'INFO' }));
           }
         });
         WD.ui.toast(n ? '공지를 수정했습니다.' : '공지를 올렸습니다.'); WD.app.refresh();
@@ -99,6 +102,8 @@
   }
 
   function openNotice(n, manage) {
+    const me = WD.auth.currentRaw();
+    if (me && !me.preview && !(n.readBy || []).includes(me.id)) { WD.tx((db) => { const t = (db.notices || []).find((x) => x.id === n.id); if (t) t.readBy = [...(t.readBy || []), me.id]; }); WD.app.refreshBadges?.(); }
     const m = WD.ui.modal({ title: n.title, size: 'md', hideOk: !manage, okText: '수정', cancelText: '닫기',
       body: `<div class="notice-view"><div class="muted tiny">${n.pinned ? '📌 고정 · ' : ''}${esc(WD.userName(n.authorId))} · ${WD.fmtDT(n.createdAt)}${n.updatedAt !== n.createdAt ? ` · 수정 ${WD.fmtDT(n.updatedAt)}` : ''}</div><div class="notice-body">${esc(n.body || '').replace(/\n/g, '<br>') || '<span class="muted">(내용 없음)</span>'}</div></div>`,
       onOk: () => { setTimeout(() => noticeForm(n), 0); } });
@@ -120,6 +125,14 @@
     el.querySelector('[data-notice-all]')?.addEventListener('click', () => WD.ui.modal({ title: '공지사항 전체', size: 'md', hideOk: true, cancelText: '닫기', body: `<ul class="notice-list">${noticeList().map((n) => `<li><button class="notice-row" data-nall="${n.id}">${n.pinned ? '<span class="pin">📌</span>' : ''}<b>${esc(n.title)}</b><small>${WD.fmtDT(n.updatedAt || n.createdAt)}</small></button></li>`).join('')}</ul>` }).el.querySelectorAll('[data-nall]').forEach((b) => b.addEventListener('click', () => openNotice(N(b.dataset.nall), manage))));
   };
   WD.openNoticeById = (id, u) => { const n = (WD.db.notices || []).find((x) => x.id === id); if (n) openNotice(n, WD.isTop(u)); };
+
+  /** 공지사항 페이지 — 대표·관리자: 작성·수정·삭제 / 실장·직원: 열람만 */
+  V.notices = (el, p, q, u) => {
+    const manage = WD.isTop(u);
+    el.innerHTML = `<div class="page narrow-notice"><div class="page-head simple"><div><h1>공지사항</h1><p class="muted">${manage ? '직원들에게 알릴 내용을 작성·수정합니다. 모든 직원이 이 메뉴에서 볼 수 있어요.' : '우리두리 공지사항입니다. 제목을 누르면 내용을 볼 수 있어요.'}</p></div></div>${WD.noticeBoardHTML(u, { manage, full: true })}</div>`;
+    WD.bindNotices(el, manage ? u : { ...u, role: 'staff' });
+    if (q.open) WD.openNoticeById(q.open, manage ? u : { ...u, role: 'staff' });
+  };
 
   V.dashboard = async (el, p, q, u) => (WD.isTop(u) ? ceoDash(el, u) : staffDash(el, u));
 

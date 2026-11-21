@@ -14,6 +14,7 @@
   const NAV = [
     { path: '/dashboard', label: '대시보드', icon: 'home', roles: CEO },
     { path: '/docs', label: '통합 문서함', icon: 'folder', roles: ALL },
+    { path: '/notices', label: '공지사항', icon: 'megaphone', badge: 'notice', roles: ALL }, // 대표·관리자 작성 / 실장·직원 열람
     { path: '/attendance', label: '출결·근태', icon: 'clock', roles: ['manager', 'staff'] }, // 실장·직원: 본인 출결 체크용 단독 메뉴
     { path: '/inbox', label: '알림함', icon: 'inbox', badge: 'inbox', roles: ALL },
     // 필수 서류(메인) > 근로·위촉계약서(서브)
@@ -34,7 +35,7 @@
 
   const ROUTES = [
     ['/dashboard', 'dashboard', CEO], ['/docs', 'docs', ALL], ['/docs/:folder', 'docs', ALL], ['/doc/:id', 'docView', ALL], ['/new/:kind', 'newDoc', ALL],
-    ['/templates', 'templates', ALL], ['/inbox', 'inbox', ALL], ['/workflow', 'workflow', CEO], ['/checklist', 'checklist', CHECK],
+    ['/templates', 'templates', ALL], ['/inbox', 'inbox', ALL], ['/notices', 'notices', ALL], ['/workflow', 'workflow', CEO], ['/checklist', 'checklist', CHECK],
     ['/contracts', 'contracts', CEO], ['/contract/:id', 'contract', CEO], ['/attendance', 'attendance', ALL], ['/attendance/me', 'attendanceMe', ['admin']],
     ['/finance', 'finance', CEO], ['/people', 'people', CEO], ['/vault', 'vault', CEO], ['/audit', 'audit', CEO], ['/launcher', 'launcher', CEO],
     ['/system', 'system', CEO],
@@ -64,7 +65,8 @@
     const contract = WD.isTop(u)
       ? WD.wf.expiryAlerts().filter((a) => a.kind === '계약 종료' && !a.renewed).length + db.contracts.filter((c) => c.status === 'SIGNED').length
       : db.contracts.filter((c) => c.userId === u.id && c.status === 'SENT').length;
-    return { inbox, wf, contract };
+    const notice = WD.noticeUnread ? WD.noticeUnread(u) : 0;
+    return { inbox, wf, contract, notice };
   }
 
   function shell(u, route) {

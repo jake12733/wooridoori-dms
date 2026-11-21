@@ -888,3 +888,9 @@ body.preview-on .topbar { background: #fffaf0; }
 .sel-date { color: var(--g7); }
 .att-btn:disabled { opacity: .35; cursor: not-allowed; transform: none !important; }
 @media (max-width: 900px) { .cal-cell { min-height: 58px; padding: 4px; } .cal-chip { font-size: 10px; padding: 0 4px; } }
+
+/* v14 — 공지사항 메뉴 */
+.narrow-notice { max-width: 980px; }
+.notice-card.full .notice-row { padding: 14px 6px; }
+.notice-preview { width: 100%; color: var(--ink2); font-size: 13.5px; line-height: 1.55; }
+.unread-dot { font-size: 10.5px; font-weight: 800; color: var(--blue); background: var(--blue-l); border-radius: 5px; padding: 0 6px; }
