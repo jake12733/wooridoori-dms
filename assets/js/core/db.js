@@ -61,13 +61,23 @@
   WD.userName = (id) => WD.user(id)?.name || (id ? '(퇴사/삭제된 사용자)' : '-');
   WD.activeUsers = () => WD.db.users.filter((u) => u.status === 'ACTIVE');
   /** 대표를 제외한 활성 구성원 (관리자·실장·직원) */
-  WD.staffUsers = () => WD.db.users.filter((u) => u.status === 'ACTIVE' && u.role !== 'ceo');
+  WD.staffUsers = () => WD.db.users.filter((u) => u.status === 'ACTIVE' && !WD.isTop(u));
   WD.ROLES = ['ceo', 'admin', 'manager', 'staff'];
+  /** 최고 권한: 대표('ceo')와 관리자('admin')는 동일 권한 */
+  WD.TOP_ROLES = ['ceo', 'admin'];
+  WD.isTop = (u) => !!u && (u.role === 'ceo' || u.role === 'admin');
+  /** 이메일 고정 직급 (DB 값과 무관하게 항상 우선 적용·보호) */
+  WD.FIXED_ROLES = { 'happydrawing2@naver.com': 'ceo', 'yunt59894@gmail.com': 'admin' };
+  WD.fixedRole = (email) => WD.FIXED_ROLES[String(email || '').trim().toLowerCase()] || null;
+  /** 적용 직급: 고정 이메일 → DB role → 기본 'staff' */
+  /** 직원 화면 미리보기 중에는 데이터 등록·저장·발송을 막음 (화면 확인용) */
+  WD.blockPreview = () => { if (WD.auth?.currentRaw()?.preview) throw new Error('직원 화면 미리보기 중에는 저장·등록·발송이 되지 않습니다. [원래 권한으로 돌아가기]를 눌러 주세요.'); };
+  WD.effectiveRole = (u) => WD.fixedRole(u?.email || u?.loginId) || (WD.ROLES.includes(u?.role) ? u.role : 'staff');
   WD.ROLE_LABEL = { ceo: '대표', admin: '관리자', manager: '실장', staff: '직원' };
   WD.roleBadge = (role) => `<span class="role-badge r-${role}">${WD.ROLE_LABEL[role] || role}</span>`;
   /** 전역 상태: 로그인 사용자·직급 (매 화면 진입 시 DB에서 재조회, 새로고침에도 유지) */
   WD.state = { user: null, role: null };
-  WD.ceos = () => WD.db.users.filter((u) => u.role === 'ceo' && u.status === 'ACTIVE');
+  WD.ceos = () => WD.db.users.filter((u) => WD.isTop(u) && u.status === 'ACTIVE');
   WD.folder = (id) => WD.db.folders.find((f) => f.id === id);
   WD.folderPath = (id) => {
     const f = WD.folder(id); if (!f) return '-';

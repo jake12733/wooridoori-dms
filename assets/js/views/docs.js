@@ -130,8 +130,8 @@
   const catBadge = (fid) => { const f = WD.folder(fid); return f ? `<span class="cat-badge" style="--c:${f.color}">${f.ceoOnly ? '🔒 ' : ''}${esc(f.name)}</span>` : ''; };
   WD.catBadge = catBadge;
 
-  function registerFlow(u, folderId) {
-    const isCEO = u.role === 'ceo';
+  function registerFlow(u, folderId, subDef = '') {
+    const isCEO = WD.isTop(u);
     const writable = WD.db.folders.filter((f) => WD.sec.folderAccess(f, u) === 'edit');
     if (!writable.length) { WD.ui.toast('문서를 등록할 수 있는 분류가 없습니다.', 'warn'); return; }
     const def = writable.some((f) => f.id === folderId) ? folderId : (writable.find((f) => f.id === 'c_ops') || writable[0]).id;
@@ -157,7 +157,8 @@
         <div class="grid2">
           <label class="fld"><span>문서 제목</span><input data-title placeholder="예) 12월 활동 보고서"></label>
           <label class="fld"><span>분류</span><select data-folder>${catOpts}</select></label>
-        </div>`,
+        </div>
+        ${isCEO ? `<label class="fld"><span>🔒 세부 항목 (선택 · 대표·관리자만 보임)</span><select data-sub><option value="">지정 안 함</option>${WD.SUB_ITEMS.map((s) => `<option ${s === subDef ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label>` : ''}`,
       onOk: async (w) => {
         const mode = w.querySelector('.reg-opt.active').dataset.mode;
         const fid = w.querySelector('[data-folder]').value;
@@ -170,7 +171,7 @@
           if (!title) title = t ? t.title : `새 ${kind === 'sheet' ? '표' : '문서'} ${WD.ymd()}`;
           let content = t ? JSON.parse(JSON.stringify(t.content)) : (kind === 'sheet' ? [{ name: 'Sheet1' }] : kind === 'doc' ? '<p></p>' : { fileId: null });
           if (kind === 'hwp' && !content) content = { fileId: null };
-          const d = WD.wf.createDoc({ title, kind, folderId: fid, content, note: t ? `양식 '${t.title}'에서 작성` : '직접 작성' });
+          const d = WD.wf.createDoc({ title, kind, folderId: fid, content, note: t ? `양식 '${t.title}'에서 작성` : '직접 작성', sub: w.querySelector('[data-sub]')?.value || '' });
           WD.app.go(`#/doc/${d.id}`); return;
         }
         const f = w.querySelector('[data-file]').files[0]; if (!f) throw new Error('올릴 파일을 선택하세요.');
@@ -181,7 +182,7 @@
         if (['xlsx', 'xls', 'csv', 'ods'].includes(ext)) { kind = 'sheet'; content = await WD.editors.sheet.importFile(f); }
         else if (ext === 'docx') { kind = 'doc'; content = await WD.editors.doc.importDocx(f); }
         else if (['hwp', 'hwpx', 'hml'].includes(ext)) { kind = 'hwp'; }
-        const d = WD.wf.createDoc({ title, kind, folderId: fid, content, note: `파일 올리기: ${f.name}` });
+        const d = WD.wf.createDoc({ title, kind, folderId: fid, content, note: `파일 올리기: ${f.name}`, sub: w.querySelector('[data-sub]')?.value || '' });
         WD.tx((db) => { const x = db.documents.find((y) => y.id === d.id); x.sourceFileId = fileId; WD.audit('DOC_UPLOAD', { type: 'document', id: d.id, name: title }, `${f.name} (${WD.ui.fileSize(f.size)}) → ${WD.folderPath(fid)}`); });
         WD.ui.toast('등록했습니다.');
         WD.app.go(`#/doc/${d.id}`);
@@ -198,15 +199,21 @@
   /* =====================================================================
    * 통합 문서함 (단일 분류 · 요약 카드 · 5열 목록)
    * ===================================================================== */
+  // 기존 세부 항목 (🔒 대표 전용 아래 서브 항목으로 유지)
+  WD.SUB_ITEMS = ['근로계약', '위촉계약', '인사기록·제출서류', '증명서·확인서', '공문·안내문', '보고서', '출석부', '회의록', '매출', '지출·증빙', '정산', '보안서약', '개인정보'];
+  WD.CEO_LINKS = [['#/finance', '경영·매출 장부', 'chart'], ['#/docs/c_ceo', '대표 전용 보안 폴더', 'lock'], ['#/vault', '퇴사자 보관함', 'vault'], ['#/audit', '보안 기록(감사 로그)', 'audit'], ['#/launcher', '바로가기 관리', 'rocket'], ['#/people', '직원·계정 관리', 'users'], ['#/contracts', '근로·위촉계약서', 'contract']];
+
   V.docs = (el, params, query, u) => {
     const db = WD.db;
-    const isCEO = u.role === 'ceo';
+    const isCEO = WD.isTop(u);
     const folderId = params.folder || 'all';
+    const sub = query.sub || '';
+    if (sub && !isCEO) { WD.auditTx('ACCESS_DENIED', { type: 'folder', name: sub }, '대표 전용 세부 항목 접근 시도'); V.forbidden(el); return; }
     const cur = WD.folder(folderId);
     if (cur?.ceoOnly && !isCEO) { WD.auditTx('ACCESS_DENIED', { type: 'folder', id: cur.id, name: cur.name }, '대표 전용 보안 폴더 접근 시도'); V.forbidden(el); return; }
     const docs = WD.api.documents.visible();
     const cats = db.folders.filter((f) => isCEO || !f.ceoOnly);
-    const inCat = (d) => folderId === 'all' || d.folderId === folderId;
+    const inCat = (d) => (sub ? d.sub === sub : (folderId === 'all' || d.folderId === folderId));
     const mine = (d) => d.ownerId === u.id || d.assigneeId === u.id;
     // 요약 카드: 대표=전체 결재 흐름 / 그 외=내 문서 기준
     const isPending = (d) => ['PENDING', 'RESUBMITTED'].includes(d.status) && (isCEO || mine(d));
@@ -216,11 +223,11 @@
     let list = base.filter((d) => (filter === 'pending' ? isPending(d) : filter === 'revision' ? isRevision(d) : true));
     list.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
     const canExport = WD.sec.canExport(u);
-    const qsF = (f) => `#/docs${folderId === 'all' ? '' : '/' + folderId}${f === 'all' ? '' : '?f=' + f}`;
+    const qsF = (f) => { const p = new URLSearchParams(); if (sub) p.set('sub', sub); if (f !== 'all') p.set('f', f); const s = p.toString(); return `#/docs${folderId === 'all' ? '' : '/' + folderId}${s ? '?' + s : ''}`; };
     const canWriteHere = cur ? WD.sec.folderAccess(cur, u) === 'edit' : true;
 
     el.innerHTML = `<div class="page">
-      <div class="page-head simple"><div><h1>${cur ? `${cur.ceoOnly ? '🔒 ' : ''}${esc(cur.name)}` : '통합 문서함'}</h1>
+      <div class="page-head simple"><div><h1>${sub ? `🔒 대표 전용 › ${esc(sub)}` : cur ? `${cur.ceoOnly ? '🔒 ' : ''}${esc(cur.name)}` : '통합 문서함'}</h1>
         <p class="muted">${cur?.ceoOnly ? '대표만 볼 수 있는 보안 폴더입니다. 모든 문서가 웹 열람전용으로 보호됩니다.' : '문서를 고르면 바로 열려요. 새 문서는 오른쪽 [+ 문서 등록]을 누르세요.'}</p></div>
         <div class="row gap-s wrap">
           <div class="search-box">${I('search')}<input id="doc-q" placeholder="문서 이름으로 찾기" value="${esc(query.q || '')}"></div>
@@ -235,7 +242,10 @@
       <div class="docs-layout simple">
         <aside class="cat-menu">
           <a class="cat-item ${folderId === 'all' ? 'active' : ''}" href="#/docs">${I('inbox')}<span>전체 문서</span><em>${docs.length}</em></a>
-          ${cats.map((c) => `<a class="cat-item ${folderId === c.id ? 'active' : ''} ${c.ceoOnly ? 'ceo' : ''}" href="#/docs/${c.id}"><span class="fdot" style="background:${c.color}"></span><span>${c.ceoOnly ? '🔒 ' : ''}${esc(c.name)}</span><em>${docs.filter((d) => d.folderId === c.id).length}</em></a>`).join('')}
+          ${cats.map((c) => `<a class="cat-item ${folderId === c.id && !sub ? 'active' : ''} ${c.ceoOnly ? 'ceo' : ''}" href="#/docs/${c.id}"><span class="fdot" style="background:${c.color}"></span><span>${c.ceoOnly ? '🔒 ' : ''}${esc(c.name)}</span><em>${docs.filter((d) => d.folderId === c.id).length}</em></a>${c.ceoOnly && isCEO ? `<details class="cat-sub" ${folderId === 'c_ceo' || sub ? 'open' : ''}><summary>세부 항목 · 대표 메뉴</summary>
+            ${WD.CEO_LINKS.map(([h, l, ic]) => `<a class="sub-item link" href="${h}">${I(ic, 'xs')}<span>${l}</span></a>`).join('')}
+            <div class="sub-sep">세부 항목</div>
+            ${WD.SUB_ITEMS.map((s) => `<a class="sub-item ${sub === s ? 'active' : ''}" href="#/docs/c_ceo?sub=${encodeURIComponent(s)}"><span>${esc(s)}</span><em>${docs.filter((d) => d.sub === s).length}</em></a>`).join('')}</details>` : ''}`).join('')}
         </aside>
         <section class="card flush">
           <table class="tbl docs-tbl simple"><thead><tr><th>문서명</th><th>분류</th><th>상태</th><th>작성자 · 수정일</th><th class="r">작업</th></tr></thead>
@@ -249,7 +259,7 @@
         </section>
       </div></div>`;
     el.querySelectorAll('[data-href]').forEach((r) => r.addEventListener('click', () => (location.hash = r.dataset.href)));
-    el.querySelector('[data-register]')?.addEventListener('click', () => registerFlow(u, cur?.id));
+    el.querySelector('[data-register]')?.addEventListener('click', () => registerFlow(u, sub ? 'c_ceo' : cur?.id, sub));
     el.querySelectorAll('[data-export]').forEach((b) => b.addEventListener('click', () => exportMenu(WD.doc(b.dataset.export))));
     const q = el.querySelector('#doc-q');
     const doFilter = () => { const v = q.value.trim().toLowerCase(); el.querySelectorAll('#doc-rows tr').forEach((tr) => { tr.style.display = !v || tr.dataset.title.includes(v) ? '' : 'none'; }); };
@@ -309,7 +319,7 @@
     const wfBtns = [];
     if (WD.wf.canTransition(d, 'PENDING', u) && isOwner) wfBtns.push(`<button class="btn ghost" data-wf="PENDING">${I('send')} 대표에게 제출</button>`);
     if (WD.wf.canTransition(d, 'RESUBMITTED', u)) wfBtns.push(`<button class="btn ghost" data-wf="RESUBMITTED">${I('refresh')} 재제출</button>`);
-    if (u.role === 'ceo' && ['PENDING', 'RESUBMITTED'].includes(d.status)) wfBtns.push(`<button class="btn warn" data-wf="REVISION_REQUIRED">${I('pen')} 보완 요청</button>`, `<button class="btn success" data-wf="APPROVED">${I('check')} 최종 승인·잠금</button>`);
+    if (WD.isTop(u) && ['PENDING', 'RESUBMITTED'].includes(d.status)) wfBtns.push(`<button class="btn warn" data-wf="REVISION_REQUIRED">${I('pen')} 보완 요청</button>`, `<button class="btn success" data-wf="APPROVED">${I('check')} 최종 승인·잠금</button>`);
     const lastRev = [...WD.db.wfEvents].reverse().find((e) => e.docId === d.id && e.to === 'REVISION_REQUIRED');
 
     el.innerHTML = `<div class="page doc-page-v">
@@ -323,15 +333,13 @@
           </div>
         </div>
         <div class="doc-actions">
-          ${editable ? `<button class="btn primary" data-save>${I('save')} 새 버전 저장 (v${d.version + 1})</button>` : ''}
-          ${WD.dispatchMenuHTML(d.id)}
           ${wfBtns.join('')}
           <div class="dd"><button class="btn ghost icon-only" data-dd="more" aria-label="더보기">⋯</button>
             <div class="dd-menu right" data-ddm="more">
               ${editable && d.kind === 'sheet' ? `<button class="dd-item" data-import="sheet">${I('upload')} 엑셀/CSV 가져오기</button>` : ''}
               ${editable && d.kind === 'doc' ? `<button class="dd-item" data-import="docx">${I('upload')} Word(.docx) 가져오기</button>` : ''}
               ${editable && d.kind === 'hwp' ? `<button class="dd-item" data-import="hwp">${I('upload')} HWP/HWPX 파일 열기</button>` : ''}
-              ${(['sheet', 'doc'].includes(d.kind) || (d.kind === 'hwp' && u.role === 'ceo')) ? `<button class="dd-item" data-tpl>${I('template')} 템플릿으로 저장</button>` : ''}
+              ${(['sheet', 'doc'].includes(d.kind) || (d.kind === 'hwp' && WD.isTop(u))) ? `<button class="dd-item" data-tpl>${I('template')} 템플릿으로 저장</button>` : ''}
               ${editable ? `<button class="dd-item" data-move>${I('folder')} 폴더 이동</button>` : ''}
             </div></div>
           ${canExport ? `<button class="btn ghost" data-export title="다운로드·PDF/엑셀 내보내기 (대표 전용, 기록됨)">${I('download')} 다운로드·내보내기</button>` : ''}
@@ -340,11 +348,21 @@
       ${d.status === 'REVISION_REQUIRED' && lastRev ? `<div class="alert alert-warn">${I('alert')}<span><b>보완 요청</b> (${esc(WD.userName(lastRev.actorId))}, ${WD.fmtDT(lastRev.at)}) — ${esc(lastRev.reason)}<br><small>내용을 수정해 새 버전으로 저장한 뒤 [재제출]하세요.</small></span></div>` : ''}
       ${!canExport ? `<div class="alert alert-info slim">${I('lock')}<span>웹 열람전용 문서입니다. 다운로드·복사·인쇄·우클릭은 막혀 있고, 화면에 이름·직급·아이디·접속 시간이 표시됩니다.</span></div>` : ''}
       <div class="doc-body">
-        <section class="editor-area protected ${editable ? '' : 'readonly'}" id="editor-area"><div class="editor-host" id="editor-host"><div class="loading">${I('refresh', 'spin')} 편집기 불러오는 중…</div></div></section>
+        <div class="office office-${d.kind}">
+          <div class="ribbon">
+            <span class="app-mark">${({ sheet: 'X', doc: 'W', hwp: '한', file: 'F' })[d.kind]}</span><span class="app-name">${({ sheet: 'Excel형 · 표 편집', doc: 'Word형 · 문서 편집', hwp: '한글형 · 문서 작성', file: '파일 보기' })[d.kind]}${editable ? '' : ' (열람)'}</span>
+            <div class="ribbon-actions">
+              ${editable ? `<button class="rb-btn" data-save>${I('save')} 저장</button>` : ''}
+              <div class="dd"><button class="rb-btn" data-dd="targets">${I('users')} <span data-tg-label>발송 대상 선택</span> ▾</button><div class="dd-menu right tg-menu" data-ddm="targets"></div></div>
+              <button class="rb-btn rb-send" data-oneclick>${I('send')} 원클릭 발송</button>
+            </div>
+          </div>
+          <section class="editor-area protected ${editable ? '' : 'readonly'}" id="editor-area"><div class="editor-host" id="editor-host"><div class="loading">${I('refresh', 'spin')} 편집기 불러오는 중…</div></div></section>
+        </div>
         <aside class="doc-side card">
           <div class="tabs" role="tablist"><button class="tab active" data-tab="info">정보</button><button class="tab" data-tab="ver">버전 ${d.version}</button><button class="tab" data-tab="tl">이력</button></div>
           <div class="tab-pane" data-pane="info">
-            <dl class="kv"><dt>폴더</dt><dd>${esc(WD.folderPath(d.folderId))}</dd><dt>형식</dt><dd>${WD.ui.KIND_LABEL[d.kind]}</dd><dt>작성자</dt><dd>${esc(WD.userName(d.ownerId))}</dd>
+            <dl class="kv"><dt>분류</dt><dd>${esc(WD.folderPath(d.folderId))}</dd>${WD.isTop(u) && d.sub ? `<dt>세부 항목</dt><dd>🔒 ${esc(d.sub)}</dd>` : ''}<dt>형식</dt><dd>${WD.ui.KIND_LABEL[d.kind]}</dd><dt>작성자</dt><dd>${esc(WD.userName(d.ownerId))}</dd>
             ${d.assigneeId ? `<dt>담당(요청)</dt><dd>${esc(WD.userName(d.assigneeId))}</dd>` : ''}<dt>생성</dt><dd>${WD.fmtDT(d.createdAt)}</dd><dt>최종 수정</dt><dd>${WD.fmtDT(d.updatedAt)}</dd>
             ${d.locked ? `<dt>승인·잠금</dt><dd>${WD.fmtDT(d.lockedAt)}</dd>` : ''}<dt>공유 대상</dt><dd>${(d.recipients || []).map((r) => esc(WD.userName(r))).join(', ') || '-'}</dd>
             ${d.legalHold || WD.folder(d.folderId)?.legal ? '<dt>보관</dt><dd><span class="tag">법정 보관 대상</span></dd>' : ''}</dl>
@@ -374,30 +392,75 @@
     } catch (e) { console.error(e); host.insertAdjacentHTML('beforeend', `<div class="alert alert-danger">${I('alert')}<span>편집기 로드 실패: ${esc(e.message)}</span></div>`); }
     if (ed) WD.app.onCleanup(() => ed.destroy && ed.destroy());
     // 대표 외 직급: 화면 배경 전체에 워터마크(이름·직급·아이디·접속 시간)
-    if (u.role !== 'ceo') WD.sec.watermark(el.querySelector('.doc-page-v'), { full: true });
+    if (!WD.isTop(u)) WD.sec.watermark(el.querySelector('.doc-page-v'), { full: true });
 
-    // 저장
+    // 저장 (공통): 현재 편집 내용을 새 버전으로 기록
+    const collectContent = async () => {
+      if (d.kind === 'sheet') return ed.getData();
+      if (d.kind === 'doc') return ed.getHTML();
+      if (d.kind === 'hwp') {
+        const bytes = await ed.exportBytes('hwp');
+        const name = (el.querySelector('#doc-title')?.value || d.title) + '.hwp';
+        const fileId = await WD.files.put(new Blob([bytes], { type: 'application/x-hwp' }), { name });
+        ed.markSaved(name);
+        return { fileId, name, size: bytes.byteLength };
+      }
+      return null;
+    };
+    const saveNow = async (note) => {
+      const content = await collectContent();
+      if (content === null) throw new Error('파일 형식 문서는 새 파일을 올려 교체하세요.');
+      const newTitle = el.querySelector('#doc-title')?.value.trim();
+      WD.wf.saveVersion(d.id, content, note);
+      if (newTitle && newTitle !== d.title) WD.tx((db) => { db.documents.find((x) => x.id === d.id).title = newTitle; });
+    };
     el.querySelector('[data-save]')?.addEventListener('click', async (e) => {
       const btn = e.currentTarget; btn.disabled = true;
       try {
-        let content;
-        if (d.kind === 'sheet') content = ed.getData();
-        else if (d.kind === 'doc') content = ed.getHTML();
-        else if (d.kind === 'hwp') {
-          const bytes = await ed.exportBytes('hwp');
-          const name = (el.querySelector('#doc-title')?.value || d.title) + '.hwp';
-          const fileId = await WD.files.put(new Blob([bytes], { type: 'application/x-hwp' }), { name });
-          content = { fileId, name, size: bytes.byteLength };
-          ed.markSaved(name);
-        } else { WD.ui.toast('파일 형식 문서는 새 파일을 업로드해 교체하세요.', 'warn'); btn.disabled = false; return; }
         const note = await WD.ui.prompt(`v${WD.doc(d.id).version + 1} 저장`, '변경 내용 메모', { placeholder: '예) 참여 인원 통계표 추가', value: d.status === 'REVISION_REQUIRED' ? '보완 요청 반영' : '내용 수정' });
         if (note === null) { btn.disabled = false; return; }
-        const newTitle = el.querySelector('#doc-title')?.value.trim();
-        WD.wf.saveVersion(d.id, content, note);
-        if (newTitle && newTitle !== d.title) WD.tx((db) => { db.documents.find((x) => x.id === d.id).title = newTitle; });
+        await saveNow(note);
         WD.ui.toast(`v${WD.doc(d.id).version}로 저장했습니다.`);
         WD.app.refresh();
       } catch (err) { WD.ui.toast(err.message, 'error'); btn.disabled = false; }
+    });
+
+    // 발송 대상 선택 (직급 또는 직원 다중 선택) + 원클릭 발송(저장 → 발송)
+    const tgKey = `wd_targets_${u.id}`;
+    const people = WD.activeUsers().filter((x) => x.id !== u.id).map((x) => ({ ...x, role: WD.effectiveRole(x) }));
+    let picked = new Set(JSON.parse(localStorage.getItem(tgKey) || 'null') || people.filter((x) => !WD.isTop(u) && WD.isTop(x)).map((x) => x.id));
+    picked = new Set([...picked].filter((id) => people.some((x) => x.id === id)));
+    const picker = el.querySelector('[data-ddm="targets"]');
+    const label = el.querySelector('[data-tg-label]');
+    const renderPicker = () => {
+      const groups = [['top', '대표·관리자', (x) => WD.isTop(x)], ['manager', '실장', (x) => x.role === 'manager'], ['staff', '직원', (x) => x.role === 'staff']];
+      picker.innerHTML = `<div class="dd-head"><b>발송 대상</b><small>직급을 누르면 한꺼번에 선택돼요</small></div>
+        <div class="tg-roles">${groups.map(([k, l, fn]) => { const ids = people.filter(fn).map((x) => x.id); const all = ids.length && ids.every((id) => picked.has(id)); return `<button type="button" class="chip ${all ? 'active' : ''}" data-tg-role="${k}" ${ids.length ? '' : 'disabled'}>${l} <em>${ids.length}</em></button>`; }).join('')}<button type="button" class="chip" data-tg-clear>선택 해제</button></div>
+        <div class="tg-list">${people.map((x) => `<label class="chk"><input type="checkbox" value="${x.id}" ${picked.has(x.id) ? 'checked' : ''}> ${WD.ui.avatar(x, 22)} ${esc(x.name)} ${WD.roleBadge(x.role)}</label>`).join('') || '<p class="muted pad">보낼 수 있는 다른 직원 계정이 없습니다.</p>'}</div>`;
+      label.textContent = picked.size ? `${picked.size}명 선택` : '발송 대상 선택';
+      picker.querySelectorAll('[data-tg-role]').forEach((b) => b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const fn = groups.find((g) => g[0] === b.dataset.tgRole)[2];
+        const ids = people.filter(fn).map((x) => x.id); const all = ids.every((id) => picked.has(id));
+        ids.forEach((id) => (all ? picked.delete(id) : picked.add(id))); save(); renderPicker();
+      }));
+      picker.querySelector('[data-tg-clear]').addEventListener('click', (e) => { e.stopPropagation(); picked.clear(); save(); renderPicker(); });
+      picker.querySelectorAll('input[type=checkbox]').forEach((c) => c.addEventListener('change', () => { c.checked ? picked.add(c.value) : picked.delete(c.value); save(); label.textContent = picked.size ? `${picked.size}명 선택` : '발송 대상 선택'; }));
+    };
+    const save = () => localStorage.setItem(tgKey, JSON.stringify([...picked]));
+    picker.addEventListener('click', (e) => e.stopPropagation());
+    renderPicker();
+    el.querySelector('[data-oneclick]').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      if (!picked.size) { WD.ui.toast('먼저 [발송 대상 선택]에서 받을 사람을 골라 주세요.', 'warn'); el.querySelector('[data-dd="targets"]').click(); return; }
+      btn.disabled = true; btn.textContent = '저장·발송 중…';
+      try {
+        let saved = false;
+        if (editable && ed && (dirtyEl && !dirtyEl.classList.contains('hidden') || d.kind === 'hwp' || d.status === 'REVISION_REQUIRED')) { await saveNow('발송 전 자동 저장'); saved = true; }
+        const r = WD.wf.dispatch(d.id, { name: '원클릭 발송', action: 'CUSTOM' }, { targets: [...picked] });
+        WD.ui.toast(`${saved ? '저장 후 ' : ''}발송 완료 → ${r.targets.map((t) => WD.userName(t)).join(', ')}`);
+        WD.app.refresh();
+      } catch (err) { WD.ui.toast(err.message, 'error'); btn.disabled = false; btn.textContent = '원클릭 발송'; }
     });
 
     // 워크플로우
@@ -466,7 +529,7 @@
    * ===================================================================== */
   V.newDoc = (el, { kind }, query, u) => {
     if (!['sheet', 'doc', 'hwp'].includes(kind)) { V.notFound(el); return; }
-    if (kind === 'hwp' && u.role !== 'ceo') { el.innerHTML = `<div class="page narrow"><div class="forbidden">${I('lock')}<h2>한글(HWP) 작성은 대표만 가능합니다</h2><p>한글 편집기는 외부 엔진 내부의 저장 단축키를 차단할 수 없어, 유출 방지를 위해 실장·직원은 보안 열람만 할 수 있습니다. 문서(워드형)·스프레드시트(엑셀형)로 작성해 주세요.</p><a class="btn primary" href="#/new/doc">문서(워드형)로 작성</a></div></div>`; return; }
+    if (kind === 'hwp' && !WD.isTop(u)) { el.innerHTML = `<div class="page narrow"><div class="forbidden">${I('lock')}<h2>한글(HWP) 작성은 대표만 가능합니다</h2><p>한글 편집기는 외부 엔진 내부의 저장 단축키를 차단할 수 없어, 유출 방지를 위해 실장·직원은 보안 열람만 할 수 있습니다. 문서(워드형)·스프레드시트(엑셀형)로 작성해 주세요.</p><a class="btn primary" href="#/new/doc">문서(워드형)로 작성</a></div></div>`; return; }
     const tpls = WD.db.templates.filter((t) => t.kind === kind);
     const tpl = WD.db.templates.find((t) => t.id === query.template);
     const defFolder = query.folder || 'c_ops';
@@ -506,14 +569,14 @@
       <div class="quick-new">
         <a class="qn" href="#/new/sheet">${WD.ui.kindIcon('sheet')}<b>빈 스프레드시트</b><small>수식·서식·표 · xlsx/csv</small></a>
         <a class="qn" href="#/new/doc">${WD.ui.kindIcon('doc')}<b>빈 문서</b><small>글꼴·표·이미지 · PDF 출력</small></a>
-        ${u.role === 'ceo' ? `<a class="qn" href="#/new/hwp">${WD.ui.kindIcon('hwp')}<b>빈 한글 문서</b><small>HWP/HWPX · rhwp 엔진 (관리자)</small></a>` : ''}
+        ${WD.isTop(u) ? `<a class="qn" href="#/new/hwp">${WD.ui.kindIcon('hwp')}<b>빈 한글 문서</b><small>HWP/HWPX · rhwp 엔진 (관리자)</small></a>` : ''}
       </div>
       <div class="chips">${cats.map((c) => `<a class="chip ${c === cat ? 'active' : ''}" href="#/templates${c === '전체' ? '' : '?cat=' + encodeURIComponent(c)}">${esc(c)} <em>${c === '전체' ? db.templates.length : db.templates.filter((t) => t.category === c).length}</em></a>`).join('')}</div>
       ${list.length ? '' : WD.ui.empty('아직 등록된 양식 템플릿이 없습니다. 자주 쓰는 문서를 작성한 뒤 문서 화면의 [⋯ → 템플릿으로 저장]으로 등록하거나, 파일을 템플릿으로 등록하세요.', 'template')}
-      <div class="tpl-grid">${list.filter((t) => t.kind !== 'hwp' || u.role === 'ceo').map((t) => `<div class="tpl-card">
+      <div class="tpl-grid">${list.filter((t) => t.kind !== 'hwp' || WD.isTop(u)).map((t) => `<div class="tpl-card">
         <div class="tpl-thumb kind-${t.kind}">${WD.ui.kindIcon(t.kind)}<span>${WD.ui.KIND_LABEL[t.kind]}</span></div>
         <div class="tpl-meta"><span class="tag">${esc(t.category)}</span><b>${esc(t.title)}</b><small>${esc(WD.userName(t.ownerId))} · ${WD.ymd(new Date(t.createdAt))}</small></div>
-        <div class="row gap-s"><a class="btn sm primary" href="#/new/${t.kind}?template=${t.id}">이 양식으로 작성</a>${t.kind !== 'hwp' ? `<button class="btn sm ghost" data-pv="${t.id}">미리보기</button>` : ''}${u.role === 'ceo' || t.ownerId === u.id ? `<button class="btn sm ghost icon-only" data-del="${t.id}" title="삭제">${I('trash')}</button>` : ''}</div>
+        <div class="row gap-s"><a class="btn sm primary" href="#/new/${t.kind}?template=${t.id}">이 양식으로 작성</a>${t.kind !== 'hwp' ? `<button class="btn sm ghost" data-pv="${t.id}">미리보기</button>` : ''}${WD.isTop(u) || t.ownerId === u.id ? `<button class="btn sm ghost icon-only" data-del="${t.id}" title="삭제">${I('trash')}</button>` : ''}</div>
       </div>`).join('')}</div></div>`;
     el.querySelectorAll('[data-pv]').forEach((b) => b.addEventListener('click', async () => {
       const t = db.templates.find((x) => x.id === b.dataset.pv);
@@ -528,13 +591,13 @@
     }));
     el.querySelector('[data-up-tpl]').addEventListener('click', () => {
       WD.ui.modal({ title: '파일을 템플릿으로 등록', okText: '등록',
-        body: `<label class="fld"><span>파일 (.xlsx .csv .docx${u.role === 'ceo' ? ' .hwp .hwpx' : ''})</span><input type="file" data-f accept=".xlsx,.xls,.csv,.docx${u.role === 'ceo' ? ',.hwp,.hwpx' : ''}"></label><label class="fld"><span>템플릿 이름</span><input data-n></label><label class="fld"><span>카테고리</span><select data-c>${['보고서', '출석부', '안내문', '확인서', '회계', '계약서', '기타'].map((c) => `<option>${c}</option>`).join('')}</select></label>`,
+        body: `<label class="fld"><span>파일 (.xlsx .csv .docx${WD.isTop(u) ? ' .hwp .hwpx' : ''})</span><input type="file" data-f accept=".xlsx,.xls,.csv,.docx${WD.isTop(u) ? ',.hwp,.hwpx' : ''}"></label><label class="fld"><span>템플릿 이름</span><input data-n></label><label class="fld"><span>카테고리</span><select data-c>${['보고서', '출석부', '안내문', '확인서', '회계', '계약서', '기타'].map((c) => `<option>${c}</option>`).join('')}</select></label>`,
         onOk: async (w) => {
           const f = w.querySelector('[data-f]').files[0]; if (!f) throw new Error('파일을 선택하세요.');
           const ext = f.name.split('.').pop().toLowerCase(); let kind, content;
           if (['xlsx', 'xls', 'csv'].includes(ext)) { kind = 'sheet'; content = await WD.editors.sheet.importFile(f); }
           else if (ext === 'docx') { kind = 'doc'; content = await WD.editors.doc.importDocx(f); }
-          else if (['hwp', 'hwpx'].includes(ext) && u.role === 'ceo') { kind = 'hwp'; content = { fileId: await WD.files.put(f, { name: f.name }), name: f.name }; }
+          else if (['hwp', 'hwpx'].includes(ext) && WD.isTop(u)) { kind = 'hwp'; content = { fileId: await WD.files.put(f, { name: f.name }), name: f.name }; }
           else throw new Error('지원하지 않는 형식입니다.');
           const title = w.querySelector('[data-n]').value.trim() || f.name.replace(/\.[^.]+$/, '');
           WD.tx((db2) => { const t = { id: WD.uid('tpl'), category: w.querySelector('[data-c]').value, title, kind, content, ownerId: u.id, createdAt: WD.now() }; db2.templates.push(t); WD.audit('TEMPLATE_SAVE', { type: 'template', id: t.id, name: title }, `파일 등록: ${f.name}`); });

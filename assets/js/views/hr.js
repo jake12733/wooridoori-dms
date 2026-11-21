@@ -20,8 +20,8 @@
 
   /* ---------- 계약서 본문 렌더 ---------- */
   WD.renderContract = (c) => {
-    const emp = WD.user(c.userId) || { name: c.userName || '(퇴사자)', phone: '' };
-    const ceo = WD.db.users.find((x) => x.role === 'ceo');
+    const emp = WD.user(c.userId) || { name: c.userName || '(퇴사자)', phone: c.userPhone || '' };
+    const ceo = WD.db.users.find((x) => WD.isTop(x));
     const yr = (s) => s ? `${s.slice(0, 4)}년 ${+s.slice(5, 7)}월 ${+s.slice(8, 10)}일` : '';
     const isEmp = c.kind === '근로';
     const pay = isEmp ? `${c.payType} ${WD.won(c.pay)}` : `${c.payType} ${WD.won(c.pay)}`;
@@ -62,7 +62,9 @@
     const m = WD.ui.modal({ title: `${kind === '근로' ? '근로계약서' : '위촉계약서'} ${base.id ? '수정' : '작성'}`, size: 'lg', okText: '저장 (초안)',
       body: `<div class="grid2">
         <label class="fld"><span>계약 유형</span><select data-k="kind"><option ${kind === '근로' ? 'selected' : ''}>근로</option><option ${kind === '위촉' ? 'selected' : ''}>위촉</option></select></label>
-        <label class="fld"><span>대상 직원</span><select data-k="userId">${staff.map((s) => `<option value="${s.id}" ${s.id === base.userId ? 'selected' : ''}>${esc(s.name)} (${esc(s.empType)} · ${esc(s.dept)})</option>`).join('')}</select></label>
+        <label class="fld"><span>대상 직원 (등록된 계정 선택)</span><select data-k="userId"><option value="">— 직접 입력 —</option>${staff.map((s) => `<option value="${s.id}" ${s.id === base.userId ? 'selected' : ''}>${esc(s.name)} (${esc(s.empType)} · ${esc(s.dept)})</option>`).join('')}</select></label>
+        <label class="fld"><span>또는 이름 직접 입력 (계정 없는 직원)</span><input data-k="userName" value="${esc(base.userId ? '' : (base.userName || ''))}" placeholder="예) 홍길동"></label>
+        <label class="fld"><span>연락처 (직접 입력 시)</span><input data-k="userPhone" value="${esc(base.userPhone || '')}" placeholder="010-0000-0000"></label>
         <label class="fld"><span>계약 시작일</span><input type="date" data-k="start" value="${base.start || WD.ymd()}"></label>
         <label class="fld"><span>계약 종료일</span><input type="date" data-k="end" value="${base.end || WD.addDays(364)}"></label>
         <label class="fld full"><span>근무(강의) 장소</span><input data-k="place" value="${esc(base.place || '우리두리 배움터 (서울시 ○○구 ○○로 12)')}"></label>
@@ -75,6 +77,8 @@
       </div>`,
       onOk: (w) => {
         const v = {}; w.querySelectorAll('[data-k]').forEach((i) => (v[i.dataset.k] = i.value));
+        if (!v.userId && !v.userName.trim()) throw new Error('대상 직원을 선택하거나 이름을 직접 입력하세요.');
+        if (v.userId) { v.userName = ''; v.userPhone = ''; } else v.userId = null;
         if (!v.duties || !v.pay) throw new Error('업무 내용과 금액을 입력하세요.');
         if (v.end <= v.start) throw new Error('종료일이 시작일보다 늦어야 합니다.');
         v.pay = Number(v.pay);
@@ -122,7 +126,7 @@
 
   /* ---------------- 계약서 목록 ---------------- */
   V.contracts = (el, p, q, u) => {
-    const db = WD.db; const isCEO = u.role === 'ceo';
+    const db = WD.db; const isCEO = WD.isTop(u);
     const list = db.contracts.filter((c) => isCEO || c.userId === u.id).sort((a, b) => (a.end > b.end ? 1 : -1));
     const alerts = WD.wf.expiryAlerts(isCEO ? null : u.id);
     const buckets = ['D-7', 'D-14', 'D-30'];
@@ -132,12 +136,12 @@
       <div class="alert-board">${buckets.map((b) => { const xs = alerts.filter((a) => a.bucket === b); return `<div class="ab-col ab-${b.replace('-', '').toLowerCase()}"><div class="ab-head"><b>${b}</b><small>${b === 'D-7' ? '7일 이내' : b === 'D-14' ? '8~14일' : '15~30일'}</small><em>${xs.length}</em></div>
         ${xs.map((a) => `<div class="ab-item"><div><span class="tag">${a.kind}</span> <a href="${a.link}"><b>${esc(a.title)}</b></a><small>만료일 ${a.end} · D-${a.days}</small></div>${a.kind === '계약 종료' && isCEO ? (a.renewed ? '<span class="tag ok">갱신 초안 있음</span>' : `<button class="btn sm primary" data-renew="${a.refId}">갱신 초안</button>`) : ''}</div>`).join('') || '<p class="muted tiny">없음</p>'}</div>`; }).join('')}</div>
       <div class="card flush"><table class="tbl"><thead><tr><th>계약서</th><th>유형</th><th>대상</th><th>계약 기간</th><th>상태</th><th>만료</th><th class="r">작업</th></tr></thead><tbody>
-      ${list.map((c) => `<tr class="click" data-href="#/contract/${c.id}"><td>${I('contract')} <b>${esc(c.title)}</b>${c.renewedFrom ? ' <span class="tag">갱신</span>' : ''}</td><td>${c.kind === '근로' ? '근로계약' : '위촉계약'}</td><td>${esc(WD.userName(c.userId))}</td><td class="nowrap">${c.start} ~ ${c.end}</td><td>${cBadge(c.status)}</td><td>${c.status === 'SEALED' ? WD.ui.dday(WD.daysLeft(c.end)) : '-'}</td><td class="r"><a class="btn sm ghost" href="#/contract/${c.id}">열기</a></td></tr>`).join('')}
+      ${list.map((c) => `<tr class="click" data-href="#/contract/${c.id}"><td>${I('contract')} <b>${esc(c.title)}</b>${c.renewedFrom ? ' <span class="tag">갱신</span>' : ''}</td><td>${c.kind === '근로' ? '근로계약' : '위촉계약'}</td><td>${esc(c.userId ? WD.userName(c.userId) : (c.userName || '-') + ' (직접 입력)')}</td><td class="nowrap">${c.start} ~ ${c.end}</td><td>${cBadge(c.status)}</td><td>${c.status === 'SEALED' ? WD.ui.dday(WD.daysLeft(c.end)) : '-'}</td><td class="r"><a class="btn sm ghost" href="#/contract/${c.id}">열기</a></td></tr>`).join('')}
       </tbody></table>${list.length ? '' : WD.ui.empty('계약서가 없습니다.', 'contract')}</div></div>`;
     el.querySelectorAll('[data-href]').forEach((r) => r.addEventListener('click', (e) => { if (!e.target.closest('a,button')) location.hash = r.dataset.href; }));
     el.querySelectorAll('[data-renew]').forEach((b) => b.addEventListener('click', () => renewDraft(db.contracts.find((c) => c.id === b.dataset.renew))));
-    el.querySelectorAll('[data-new]').forEach((b) => b.addEventListener('click', () => !WD.staffUsers().length ? WD.ui.toast('먼저 [인사·계정 관리]에서 직원 계정을 등록하세요.', 'warn') : contractForm(u, { kind: b.dataset.new }, (v) => {
-      const emp = WD.user(v.userId);
+    el.querySelectorAll('[data-new]').forEach((b) => b.addEventListener('click', () => contractForm(u, { kind: b.dataset.new }, (v) => {
+      const emp = WD.user(v.userId) || { name: v.userName };
       const c = WD.tx((db2) => { const nc = { ...v, id: WD.uid('c'), title: `${v.kind === '근로' ? '근로계약서' : '위촉계약서'} (${emp.name})`, status: 'DRAFT', locked: false, createdAt: WD.now(), folderId: 'c_hr' }; db2.contracts.push(nc); WD.audit('CONTRACT_CREATE', { type: 'contract', id: nc.id, name: nc.title }); return nc; });
       WD.app.go(`#/contract/${c.id}`);
     })));
@@ -147,7 +151,7 @@
   V.contract = (el, { id }, q, u) => {
     const db = WD.db; const c = db.contracts.find((x) => x.id === id);
     if (!c) { el.innerHTML = `<div class="page">${WD.ui.empty('계약서를 찾을 수 없습니다. (퇴사자 계약서는 법정 보관 DB로 이관됩니다)', 'alert')}</div>`; return; }
-    const isCEO = u.role === 'ceo';
+    const isCEO = WD.isTop(u);
     if (!isCEO && c.userId !== u.id) { WD.auditTx('ACCESS_DENIED', { type: 'contract', id: c.id, name: c.title }, '타인 계약서 열람 시도'); V.forbidden(el); return; }
     WD.auditTx('DOC_VIEW', { type: 'contract', id: c.id, name: c.title }, `계약서 열람 (${CST[c.status][0]})`);
     const steps = ['DRAFT', 'SENT', 'SIGNED', 'SEALED'];
@@ -158,6 +162,7 @@
         <div class="row gap-s wrap">
           ${isCEO && c.status === 'DRAFT' ? `<button class="btn ghost" data-edit>${I('pen')} 조건 수정</button><button class="btn accent" data-send>${I('send')} 서명 요청 발송</button>` : ''}
           ${c.userId === u.id && c.status === 'SENT' ? `<button class="btn accent" data-sign>${I('pen')} 전자서명하기</button>` : ''}
+          ${!c.userId && ['DRAFT', 'SENT'].includes(c.status) ? `<button class="btn accent" data-sign>${I('pen')} 현장 서명 받기 (${esc(c.userName || '대상자')})</button>` : ''}
           ${isCEO && c.status === 'SENT' ? '<span class="muted">직원 서명 대기 중</span>' : ''}
           ${isCEO && c.status === 'SIGNED' ? `<button class="btn success" data-seal>${I('stamp')} 대표 직인 날인·잠금</button>` : ''}
           ${isCEO && c.status === 'SEALED' ? `<button class="btn ghost" data-renew>${I('refresh')} 재계약/갱신 초안</button>` : ''}
@@ -166,10 +171,10 @@
       <div class="steps">${['초안 작성', '서명 요청', '직원 전자서명', '대표 직인·잠금'].map((s, i) => `<div class="step ${i <= si ? 'done' : ''} ${i === si ? 'cur' : ''}"><span>${i + 1}</span><b>${s}</b></div>`).join('')}</div>
       <div class="contract-wrap protected" id="cw">${WD.renderContract(c)}</div></div>`;
     WD.sec.watermark(el.querySelector('#cw'));
-    if (u.role !== 'ceo') WD.sec.watermark(el.querySelector('.page'), { full: true });
+    if (!WD.isTop(u)) WD.sec.watermark(el.querySelector('.page'), { full: true });
     const save = (fn, action, detail) => { WD.tx((d) => { const x = d.contracts.find((y) => y.id === c.id); fn(x, d); WD.audit(action, { type: 'contract', id: c.id, name: c.title }, detail); }); WD.app.refresh(); };
     el.querySelector('[data-edit]')?.addEventListener('click', () => contractForm(u, c, (v) => save((x) => Object.assign(x, v), 'CONTRACT_CREATE', '초안 조건 수정')));
-    el.querySelector('[data-send]')?.addEventListener('click', () => save((x) => { x.status = 'SENT'; x.sentAt = WD.now(); WD.notify(x.userId, { title: `계약서 서명 요청: ${x.title}`, body: '내용 확인 후 전자서명해 주세요.', link: `#/contract/${x.id}`, type: 'SIGN' }); }, 'DISPATCH', `서명 요청 → ${WD.userName(c.userId)}`));
+    el.querySelector('[data-send]')?.addEventListener('click', () => save((x) => { x.status = 'SENT'; x.sentAt = WD.now(); if (x.userId) WD.notify(x.userId, { title: `계약서 서명 요청: ${x.title}`, body: '내용 확인 후 전자서명해 주세요.', link: `#/contract/${x.id}`, type: 'SIGN' }); }, 'DISPATCH', `서명 요청 → ${WD.userName(c.userId)}`));
     el.querySelector('[data-sign]')?.addEventListener('click', async () => {
       const sig = await signaturePad('전자서명'); if (!sig) return;
       save((x) => { x.employeeSign = sig; x.employeeSignedAt = WD.now(); x.status = 'SIGNED'; WD.ceos().forEach((ce) => WD.notify(ce.id, { title: `서명 완료: ${x.title}`, body: `${u.name}님이 전자서명했습니다. 직인 날인이 필요합니다.`, link: `#/contract/${x.id}`, type: 'APPROVAL' })); }, 'CONTRACT_SIGN', '캔버스 전자서명');
@@ -191,7 +196,7 @@
   const ACLS = { 출석: 'a-work', 지각: 'a-late', 병가: 'a-sick', 휴가: 'a-leave', 대강: 'a-sub' };
   const attBadge = (s) => `<span class="badge ${ACLS[s] || ''}">${s}</span>`;
 
-  V.attendance = (el, p, q, u) => (u.role === 'ceo' ? attendanceCEO(el, q, u) : attendanceSelf(el, u));
+  V.attendance = (el, p, q, u) => (WD.isTop(u) ? attendanceCEO(el, q, u) : attendanceSelf(el, u));
 
   /** 관리자·실장·직원: 큰 버튼 5개 + 사유 + 오늘 내 기록(잠금) — 타인 기록·통계는 API에서 아예 내려오지 않음 */
   function attendanceSelf(el, u) {
@@ -286,7 +291,7 @@
     const legal = legalFor(target.id);
     const others = WD.activeUsers().filter((x) => x.id !== target.id);
     const opt = (sel = '') => others.map((o) => `<option value="${o.id}" ${o.id === sel ? 'selected' : ''}>${esc(o.name)} (${esc(o.title)})</option>`).join('');
-    const sameDept = others.find((o) => o.dept === target.dept && o.role === 'staff')?.id || others.find((o) => o.role === 'ceo')?.id;
+    const sameDept = others.find((o) => o.dept === target.dept && o.role === 'staff')?.id || others.find((o) => WD.isTop(o))?.id;
     const m = WD.ui.modal({ title: `계정 비활성화(퇴사 처리) · ${target.name} (${target.title || ''}, ${target.dept})`, size: 'xl', okText: '비활성화 확정 · 모든 세션 즉시 만료', danger: true,
       body: `<div class="wizard">
         <section><h4><span class="wz-n">1</span> 미결 서류·진행 중 문서 인계/이관</h4>
@@ -331,7 +336,8 @@
   function confirmResign(target, transfers, { date, reason }) {
     const ceo = WD.auth.current();
     if (!WD.sec.canManageUsers(ceo)) throw new Error('대표 또는 관리자만 계정을 비활성화할 수 있습니다.');
-    if (ceo.role === 'admin' && !['manager', 'staff'].includes(target.role)) throw new Error('관리자는 실장·직원 계정만 비활성화할 수 있습니다.');
+    if (WD.fixedRole(target.email)) throw new Error('고정 지정된 대표·관리자 계정은 비활성화할 수 없습니다.');
+    if (target.id === ceo.id) throw new Error('본인 계정은 비활성화할 수 없습니다.');
     const vaultRecs = []; const counts = {};
     const r = WD.tx((db) => {
       const out = { handover: 0, sessions: 0, shares: 0, presets: 0 };
@@ -391,7 +397,7 @@
         <button class="btn primary" data-add>${I('plus')} 계정 등록</button></div>
       <div class="card flush"><div class="sub-head">${I('users')} 활성 계정 ${active.length}명</div><table class="tbl"><thead><tr><th>이름</th><th>이메일</th><th>권한</th><th>고용 유형</th><th>부서·직함</th><th class="c">활성 세션</th><th class="c">미결 문서</th><th class="r">작업</th></tr></thead><tbody>
       ${active.map((x) => { const pd = pendingFor(x.id); return `<tr><td><div class="row gap-s center">${WD.ui.avatar(x, 28)}<b>${esc(x.name)}</b></div></td><td class="muted">${esc(x.email || x.loginId)}</td><td>${WD.roleBadge(x.role)}</td><td>${esc(x.empType)}</td><td>${esc(x.dept)} · ${esc(x.title || '')}</td><td class="c">${liveSessions(x.id) ? `<span class="live-dot"></span>${liveSessions(x.id)}` : '0'}</td><td class="c">${pd.docs.length || '-'}</td>
-        <td class="r nowrap">${(u.role === 'ceo' ? x.role !== 'ceo' : ['manager', 'staff'].includes(x.role)) ? `<button class="btn sm ghost" data-edit="${x.id}">수정</button> <button class="btn sm ghost" data-pw="${x.id}">비밀번호 재설정</button> <button class="btn sm ghost" data-kick="${x.id}" title="모든 세션 강제 종료">세션 종료</button> <button class="btn sm danger" data-resign="${x.id}">비활성화(퇴사)</button>` : x.id === u.id ? `<button class="btn sm ghost" data-pw="${x.id}">비밀번호 변경</button>` : '<span class="muted tiny">대표만 변경</span>'}</td></tr>`; }).join('')}
+        <td class="r nowrap">${(x.id !== u.id && !WD.fixedRole(x.email)) ? `<button class="btn sm ghost" data-edit="${x.id}">수정</button> <button class="btn sm ghost" data-pw="${x.id}">비밀번호 재설정</button> <button class="btn sm ghost" data-kick="${x.id}" title="모든 세션 강제 종료">세션 종료</button> <button class="btn sm danger" data-resign="${x.id}">비활성화(퇴사)</button>` : x.id === u.id ? `<button class="btn sm ghost" data-pw="${x.id}">비밀번호 변경</button>` : '<span class="muted tiny">대표만 변경</span>'}</td></tr>`; }).join('')}
       </tbody></table>${active.length > 1 ? '' : `<div class="pad muted">아직 실장·직원 계정이 없습니다. [계정 등록]으로 발급하세요.</div>`}</div>
       <div class="card flush"><div class="sub-head">${I('lock')} 비활성 계정 (접근 차단) ${resigned.length}명</div><table class="tbl"><thead><tr><th>이름</th><th>이메일</th><th>이전 소속</th><th>비활성화 일시</th><th>로그인</th><th>보관 DB 기록</th><th></th></tr></thead><tbody>
       ${resigned.map((x) => `<tr><td><b>${esc(x.name)}</b></td><td class="muted">${esc(x.email || x.loginId)}</td><td>${esc(x.dept)} · ${esc(x.empType)}</td><td>${WD.fmtDT(x.resignedAt)}</td><td><span class="badge st-revision">${I('lock', 'xs')} 차단됨</span></td><td>${vault.records.filter((r) => r.userId === x.id).length}건</td><td class="r"><a class="btn sm ghost" href="#/vault?u=${x.id}">보관 DB 보기</a></td></tr>`).join('') || `<tr><td colspan="7"><p class="muted pad">비활성 계정이 없습니다.</p></td></tr>`}
@@ -419,17 +425,19 @@
     }));
     const form = (x = null) => WD.ui.modal({ title: x ? `계정 수정 · ${x.name}` : '계정 등록', okText: x ? '저장' : '등록', size: 'md',
       body: `<div class="grid2"><label class="fld"><span>이름</span><input data-k="name" value="${esc(x?.name || '')}"></label><label class="fld"><span>이메일 (로그인 ID)</span><input type="email" data-k="email" value="${esc(x?.email || '')}" ${x ? 'disabled' : ''}></label>
-        <label class="fld"><span>직급</span><select data-k="role">${(u.role === 'ceo' ? ['admin', 'manager', 'staff'] : ['manager', 'staff']).map((r) => `<option value="${r}" ${(x?.role || 'staff') === r ? 'selected' : ''}>${WD.ROLE_LABEL[r]}</option>`).join('')}</select></label>
+        <label class="fld"><span>직급</span><select data-k="role">${['ceo', 'admin', 'manager', 'staff'].map((r) => `<option value="${r}" ${(x?.role || 'staff') === r ? 'selected' : ''}>${WD.ROLE_LABEL[r]}</option>`).join('')}</select></label>
         <label class="fld"><span>고용 유형</span><select data-k="empType">${['정규직', '위촉강사'].map((t) => `<option ${x?.empType === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
         <label class="fld"><span>부서</span><input data-k="dept" list="depts" value="${esc(x?.dept || '')}" placeholder="예) 교육팀"><datalist id="depts">${[...new Set(WD.db.users.map((y) => y.dept).filter(Boolean))].map((dp) => `<option>${esc(dp)}</option>`).join('')}</datalist></label>
         <label class="fld"><span>직함</span><input data-k="title" value="${esc(x?.title || '')}" placeholder="예) 선생님, 실장"></label>
         <label class="fld"><span>출근 기준</span><input type="time" data-k="workStart" value="${x?.workStart || '09:00'}"></label><label class="fld"><span>퇴근 기준</span><input type="time" data-k="workEnd" value="${x?.workEnd || '18:00'}"></label>
         ${x ? '' : '<label class="fld full"><span>초기 비밀번호 (8자 이상)</span><input type="password" data-k="pw" autocomplete="new-password"></label>'}</div>
-        <p class="tiny muted">대표 외 직급은 문서 작성·열람만 가능하며 다운로드·PDF/엑셀 내보내기·복사·인쇄가 차단됩니다. 관리자는 실장·직원 계정 발급·비활성화만 할 수 있습니다.</p>`,
+        <p class="tiny muted">대표 외 직급은 문서 작성·열람만 가능하며 다운로드·PDF/엑셀 내보내기·복사·인쇄가 차단됩니다. 대표·관리자는 같은 최고 권한입니다. happydrawing2@naver.com(대표)·yunt59894@gmail.com(관리자)은 고정 직급으로 보호됩니다.</p>`,
       onOk: async (w) => {
         const v = {}; w.querySelectorAll('[data-k]').forEach((i) => (v[i.dataset.k] = i.value.trim()));
         if (!v.name) throw new Error('이름을 입력하세요.');
-        if (u.role !== 'ceo' && !['manager', 'staff'].includes(v.role)) throw new Error('관리자는 실장·직원 계정만 다룰 수 있습니다.');
+        if (!WD.isTop({ role: u.realRole || u.role })) throw new Error('대표·관리자만 계정을 관리할 수 있습니다.');
+        if (x && WD.fixedRole(x.email)) v.role = WD.fixedRole(x.email); // 고정 이메일은 직급 변경 불가
+        if (!x && WD.fixedRole(v.email)) v.role = WD.fixedRole(v.email);
         if (x) {
           WD.tx((d) => { const t = d.users.find((y) => y.id === x.id); const before = t.role; Object.assign(t, { name: v.name, role: v.role, empType: v.empType, dept: v.dept, title: v.title, workStart: v.workStart, workEnd: v.workEnd }); WD.audit('USER_CREATE', { type: 'user', id: t.id, name: t.name }, `계정 수정${before !== v.role ? ` · 권한 ${WD.ROLE_LABEL[before]} → ${WD.ROLE_LABEL[v.role]}` : ''}`); });
           WD.ui.toast('저장했습니다.'); WD.app.refresh(); return;

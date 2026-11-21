@@ -33,7 +33,7 @@
     WD.app.onCleanup(() => ch.destroy());
   }
 
-  V.dashboard = async (el, p, q, u) => (u.role === 'ceo' ? ceoDash(el, u) : staffDash(el, u));
+  V.dashboard = async (el, p, q, u) => (WD.isTop(u) ? ceoDash(el, u) : staffDash(el, u));
 
   function ceoDash(el, u) {
     const db = WD.db;

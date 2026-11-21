@@ -13,15 +13,15 @@
 
   const sec = {
     ACCESS_LABEL: { edit: '작성·열람', view: '열람 전용', none: '접근 불가' },
-    isAdmin: (u = WD.auth.currentRaw()) => u?.role === 'ceo',
-    isCEO: (u = WD.auth.currentRaw()) => u?.role === 'ceo',
+    isAdmin: (u = WD.auth.currentRaw()) => WD.isTop(u),
+    isCEO: (u = WD.auth.currentRaw()) => WD.isTop(u),
     /** 계정 발급·비활성화: 대표 + 관리자(관리자는 실장·직원 계정만) */
-    canManageUsers: (u = WD.auth.currentRaw()) => u?.role === 'ceo' || u?.role === 'admin',
+    canManageUsers: (u = WD.auth.currentRaw()) => WD.isTop(u) || u?.role === 'admin',
 
     /** 분류 접근 수준: 대표=전체 / 그 외 직급=분류별 권한표(WD.CATEGORIES.access) */
     folderAccess(f, u = WD.auth.currentRaw()) {
       if (!f || !u) return 'none';
-      if (u.role === 'ceo') return 'edit';
+      if (WD.isTop(u)) return 'edit';
       if (f.ceoOnly) return 'none';
       return f.access?.[u.role] || 'none';
     },
@@ -32,7 +32,7 @@
     /** 문서 접근 수준: 'edit'(작성·열람) | 'view'(열람) | 'none' — 어떤 수준이든 비관리자는 반출 불가 */
     level(doc, u = WD.auth.currentRaw()) {
       if (!doc || !u) return 'none';
-      if (u.role === 'ceo') return doc.locked ? 'view' : 'edit';
+      if (WD.isTop(u)) return doc.locked ? 'view' : 'edit';
       if (!['admin', 'manager', 'staff'].includes(u.role) || u.status !== 'ACTIVE') return 'none';
       const f = WD.folder(doc.folderId);
       if (f?.ceoOnly) return 'none'; // 대표 전용 보안 폴더: 작성자·수신자여도 접근 불가
@@ -47,7 +47,7 @@
     canView: (doc, u) => sec.level(doc, u) !== 'none',
     canEdit: (doc, u) => sec.level(doc, u) === 'edit',
     /** 외부 반출(다운로드/인쇄/내보내기)은 대표만 */
-    canExport: (u = WD.auth.currentRaw()) => u?.role === 'ceo',
+    canExport: (u = WD.auth.currentRaw()) => WD.isTop(u),
 
     /** 반출 요청 게이트 — 모든 다운로드는 이 함수를 통과해야 함 */
     async exportDoc(target, format, fn) {
@@ -72,8 +72,9 @@
 
     /** 역할별 body 모드 적용 */
     applyMode(u) {
-      document.body.classList.toggle('staff-mode', !!u && u.role !== 'ceo');
-      document.body.classList.toggle('ceo-mode', u?.role === 'ceo');
+      document.body.classList.toggle('staff-mode', !!u && !WD.isTop(u));
+      document.body.classList.toggle('ceo-mode', WD.isTop(u));
+      document.body.classList.toggle('preview-on', !!u?.preview);
     },
 
     /** 전역 반출 억제 리스너 (1회 설치) */
@@ -142,8 +143,8 @@
       g.font = '600 13px Pretendard, "Malgun Gothic", sans-serif';
       g.fillText(`접속 ${since} · 현재 ${ts}`, 0, 6);
       g.font = '500 12px Pretendard, "Malgun Gothic", sans-serif';
-      g.fillStyle = u.role === 'ceo' ? 'rgba(31,95,74,0.12)' : 'rgba(178,69,58,0.17)';
-      g.fillText(`${WD.BRAND} · ${label || (u.role === 'ceo' ? '대표 열람' : '웹 열람전용 · 외부 반출 금지')}`, 0, 26);
+      g.fillStyle = WD.isTop(u) ? 'rgba(31,95,74,0.12)' : 'rgba(178,69,58,0.17)';
+      g.fillText(`${WD.BRAND} · ${label || (WD.isTop(u) ? '대표 열람' : '웹 열람전용 · 외부 반출 금지')}`, 0, 26);
       return c.toDataURL();
     },
 
@@ -161,7 +162,7 @@
         if (!el.isConnected) { mo.disconnect(); return; }
         if (!ov.isConnected || ov.style.backgroundImage.indexOf('data:') < 0 || ov.style.display === 'none' || ov.style.opacity === '0') {
           ov.remove(); ov = make(); el.appendChild(ov); mo.observe(ov, { attributes: true });
-          if (u.role !== 'ceo' && throttle('WM')) WD.auditTx('ACCESS_DENIED', { type: 'watermark', name: location.hash }, '워터마크 제거 시도 감지·복원');
+          if (!WD.isTop(u) && throttle('WM')) WD.auditTx('ACCESS_DENIED', { type: 'watermark', name: location.hash }, '워터마크 제거 시도 감지·복원');
         }
       });
       mo.observe(el, { childList: true, subtree: false, attributes: true, attributeFilter: ['style', 'class'] });

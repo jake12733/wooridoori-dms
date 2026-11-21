@@ -15,7 +15,7 @@
   WD.editors.hwp = {
     async mount(el, content, { readOnly = false } = {}) {
       const u = WD.auth.currentRaw();
-      const secure = u?.role !== 'ceo';
+      const secure = !WD.isTop(u);
       el.innerHTML = `<div class="hwp-shell"><div class="hwp-status">${WD.icon('hwp')} rhwp 한글 엔진(WebAssembly) 불러오는 중…</div>
         ${secure ? '<div class="hwp-pages no-select"></div>' : ''}<div class="hwp-host ${secure ? 'hwp-engine-hidden' : ''}"></div></div>`;
       const host = el.querySelector('.hwp-host');

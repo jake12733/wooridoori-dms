@@ -29,12 +29,12 @@
       },
       /** 전 직원 기록 — 대표 전용 */
       all({ month = null } = {}) {
-        const u = me(); if (u.role !== 'ceo') deny('attendance.all');
+        const u = me(); if (!WD.isTop(u)) deny('attendance.all');
         return clone(WD.db.attendance.filter((a) => !month || a.date.startsWith(month)));
       },
       /** 이번 달 통계 — 대표 전용 */
       stats(month) {
-        const u = me(); if (u.role !== 'ceo') deny('attendance.stats');
+        const u = me(); if (!WD.isTop(u)) deny('attendance.stats');
         const rows = WD.db.attendance.filter((a) => a.date.startsWith(month));
         const people = WD.staffUsers();
         const per = people.map((p) => {
@@ -47,6 +47,7 @@
       },
       /** 본인 근태 체크 (등록 후 본인 삭제·수정 불가 — locked) */
       add(status, note = '') {
+        WD.blockPreview();
         const u = me();
         if (!WD.ATT_TYPES.some((t) => t.key === status)) throw new Error('알 수 없는 근태 유형입니다.');
         if ((status === '대강' || status === '병가' || status === '휴가') && !note.trim()) throw new Error(`${status} 사유를 입력해 주세요.`);
@@ -63,7 +64,7 @@
       },
       /** 상태 수정 — 대표 전용 */
       update(id, patch) {
-        const u = me(); if (u.role !== 'ceo') deny('attendance.update');
+        const u = me(); if (!WD.isTop(u)) deny('attendance.update');
         return WD.tx((db) => {
           const r = db.attendance.find((a) => a.id === id); if (!r) throw new Error('기록 없음');
           const before = `${r.status}${r.note ? '(' + r.note + ')' : ''}`;
@@ -72,11 +73,11 @@
         });
       },
       approve(ids) {
-        const u = me(); if (u.role !== 'ceo') deny('attendance.approve');
+        const u = me(); if (!WD.isTop(u)) deny('attendance.approve');
         return WD.tx((db) => { let n = 0; db.attendance.forEach((a) => { if (ids.includes(a.id) && !a.approved) { a.approved = true; a.approvedBy = u.id; a.approvedAt = WD.now(); n++; } }); WD.audit('ATTEND_EDIT', { type: 'attendance' }, `근태 ${n}건 승인`); return n; });
       },
       remove(id) {
-        const u = me(); if (u.role !== 'ceo') deny('attendance.remove');
+        const u = me(); if (!WD.isTop(u)) deny('attendance.remove');
         WD.tx((db) => { const r = db.attendance.find((a) => a.id === id); db.attendance = db.attendance.filter((a) => a.id !== id); WD.audit('ATTEND_EDIT', { type: 'attendance', id, name: WD.userName(r?.userId) }, `${r?.date} ${r?.status} 기록 삭제`); });
       },
     },

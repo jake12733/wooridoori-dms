@@ -7,39 +7,71 @@
   const I = (n, c) => WD.icon(n, c);
   const esc = WD.esc;
 
-  /* ---------------- 수신함 ---------------- */
+  /* ---------------- 알림함: 발송 이력 (누가 · 누구에게 · 어떤 문서 · 몇 시) ---------------- */
   V.inbox = (el, p, query, u) => {
     const db = WD.db;
+    const isTop = WD.isTop(u);
     const tab = query.tab || 'in';
-    const mine = db.notifications.filter((n) => n.userId === u.id);
-    const sent = db.dispatches.filter((d) => d.senderId === u.id || u.role === 'ceo');
-    const TYPE = { APPROVAL: '결재', REVISION: '보완', SIGN: '서명', APPROVED: '승인', EXPIRY: '만료', INFO: '공유' };
+    const recv = db.dispatches.filter((x) => (x.targets || []).includes(u.id));
+    const sent = db.dispatches.filter((x) => x.senderId === u.id);
+    const all = isTop ? db.dispatches : [];
+    const notes = db.notifications.filter((n) => n.userId === u.id);
+    const unreadDoc = new Set(notes.filter((n) => !n.read && n.docId).map((n) => n.docId));
+    const list = tab === 'sent' ? sent : tab === 'all' ? all : recv;
+    const who = (x) => {
+      const s = WD.user(x.senderId);
+      const name = x.senderName || s?.name || '(삭제된 사용자)';
+      const role = x.senderRole || WD.effectiveRole(s) || 'staff';
+      return `${WD.ui.avatar(s || { id: x.senderId || 'x', name }, 30)}<span class="who"><b>${esc(name)}</b>${WD.roleBadge(role)}</span>`;
+    };
+    const toWhom = (x) => {
+      const t = x.targetNames || (x.targets || []).map((id) => ({ name: WD.userName(id), role: WD.effectiveRole(WD.user(id)) }));
+      if (!t.length) return x.folderId ? `<span class="muted">${esc(WD.folderPath(x.folderId))} 폴더</span>` : '<span class="muted">-</span>';
+      const shown = t.slice(0, 4).map((r) => `<span class="to-chip">${esc(r.name)} <small>${WD.ROLE_LABEL[r.role] || ''}</small></span>`).join('');
+      return shown + (t.length > 4 ? `<span class="to-chip more">외 ${t.length - 4}명</span>` : '');
+    };
+    const row = (x) => {
+      const doc = WD.doc(x.docId);
+      const can = doc && WD.sec.canView(doc, u);
+      const dt = new Date(x.at);
+      return `<li class="${tab === 'in' && unreadDoc.has(x.docId) ? 'unread' : ''}"><a ${can ? `href="#/doc/${x.docId}"` : ''} class="send-row ${can ? '' : 'disabled'}" data-doc="${x.docId}">
+        <div class="sr-from">${who(x)}</div>
+        <div class="sr-arrow">${I('arrow')}</div>
+        <div class="sr-to">${toWhom(x)}</div>
+        <div class="sr-doc">${doc ? WD.ui.kindIcon(doc.kind) : I('file')}<span><b>${esc(x.docTitle || doc?.title || '(삭제·이관된 문서)')}</b>${x.message ? `<small>${esc(x.message)}</small>` : ''}</span></div>
+        <time class="sr-time"><b>${WD.ymd(dt).slice(5).replace('-', '.')}</b> ${WD.pad(dt.getHours())}:${WD.pad(dt.getMinutes())}<small>${WD.ymd(dt).slice(0, 4)}</small></time>
+      </a></li>`;
+    };
     el.innerHTML = `<div class="page">
-      <div class="page-head"><div><h1>수신함 · 발송 이력</h1><p class="muted">원클릭 발송 즉시 수신자의 알림/수신함에 반영되고 이력이 자동 기록됩니다.</p></div>
+      <div class="page-head simple"><div><h1>알림함</h1><p class="muted">누가 · 누구에게 · 어떤 문서를 · 몇 시에 보냈는지 한눈에 봅니다. 줄을 누르면 문서가 열려요.</p></div>
         <button class="btn ghost" data-readall>${I('check')} 모두 읽음</button></div>
-      <div class="tabs big"><a class="tab ${tab === 'in' ? 'active' : ''}" href="#/inbox">받은 알림 <em>${mine.filter((n) => !n.read).length}</em></a><a class="tab ${tab === 'sent' ? 'active' : ''}" href="#/inbox?tab=sent">${u.role === 'ceo' ? '전체 발송 이력' : '보낸 발송'} <em>${sent.length}</em></a><a class="tab ${tab === 'presets' ? 'active' : ''}" href="#/inbox?tab=presets">발송 프리셋 <em>${db.presets.length}</em></a></div>
+      <div class="tabs big">
+        <a class="tab ${tab === 'in' ? 'active' : ''}" href="#/inbox">받은 문서 <em>${recv.length}</em></a>
+        <a class="tab ${tab === 'sent' ? 'active' : ''}" href="#/inbox?tab=sent">보낸 문서 <em>${sent.length}</em></a>
+        ${isTop ? `<a class="tab ${tab === 'all' ? 'active' : ''}" href="#/inbox?tab=all">전체 발송 이력 <em>${all.length}</em></a>` : ''}
+        <a class="tab ${tab === 'note' ? 'active' : ''}" href="#/inbox?tab=note">기타 알림 <em>${notes.filter((n) => !n.read).length}</em></a>
+      </div>
       <div class="card flush">
-      ${tab === 'in' ? (mine.length ? `<ul class="inbox">${mine.map((n) => `<li class="${n.read ? '' : 'unread'}"><a href="${n.link || '#/inbox'}" data-n="${n.id}"><span class="itype t-${n.type}">${TYPE[n.type] || '알림'}</span><span class="ibody"><b>${esc(n.title)}</b><small>${esc(n.body)}</small></span><time>${WD.fmtDT(n.at)}</time></a></li>`).join('')}</ul>` : WD.ui.empty('받은 알림이 없습니다.'))
-      : tab === 'sent' ? (sent.length ? `<table class="tbl"><thead><tr><th>일시</th><th>문서</th><th>프리셋</th><th>보낸 사람</th><th>받는 사람</th><th>버전</th></tr></thead><tbody>${sent.map((d) => { const doc = WD.doc(d.docId); return `<tr><td class="nowrap muted">${WD.fmtDT(d.at)}</td><td>${doc ? `<a href="#/doc/${doc.id}">${esc(doc.title)}</a>` : '<span class="muted">(보관 DB 이관/삭제)</span>'}</td><td><span class="tag">${esc(d.presetName)}</span></td><td>${esc(WD.userName(d.senderId))}</td><td>${esc(d.targets.map((t) => WD.userName(t)).join(', ') || (d.folderId ? WD.folderPath(d.folderId) : '-'))}</td><td>${d.version ? 'v' + d.version : '-'}</td></tr>`; }).join('')}</tbody></table>` : WD.ui.empty('발송 이력이 없습니다.', 'send'))
-      : `<div class="pad"><p class="muted">문서 화면의 <b>[원클릭 발송]</b> 메뉴에 표시되는 프리셋입니다. 문서 화면의 '직접 선택해서 발송'에서 새 프리셋을 저장할 수 있습니다.</p>
-          <table class="tbl"><thead><tr><th>이름</th><th>동작</th><th>대상</th><th></th></tr></thead><tbody>${db.presets.map((pr) => `<tr><td><b>${esc(pr.name)}</b></td><td>${WD.wf.ACTION_LABEL[pr.action]}</td><td>${pr.action === 'REQUEST_USER' ? esc(WD.userName(pr.targetUserId)) + (WD.user(pr.targetUserId)?.status !== 'ACTIVE' ? ' <span class="tag danger">퇴사</span>' : '') : pr.action === 'SAVE_FOLDER' ? esc(WD.folderPath(pr.folderId)) : pr.action === 'DEPT' ? esc(pr.dept) : pr.action === 'SUBMIT_CEO' ? '대표' : '전체 직원'}</td><td class="r">${u.role === 'ceo' ? `<button class="btn sm ghost icon-only" data-delp="${pr.id}">${I('trash')}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`}
+        ${tab === 'note'
+          ? (notes.length ? `<ul class="inbox">${notes.map((n) => `<li class="${n.read ? '' : 'unread'}"><a href="${n.link || '#/inbox'}" data-n="${n.id}"><span class="ibody"><b>${esc(n.title)}</b><small>${esc(n.body)}</small></span><time>${WD.fmtDT(n.at)}</time></a></li>`).join('')}</ul>` : WD.ui.empty('알림이 없습니다.'))
+          : (list.length ? `<div class="send-head"><span>보낸 사람</span><span></span><span>받는 사람</span><span>문서</span><span>보낸 시각</span></div><ul class="send-list">${list.map(row).join('')}</ul>` : WD.ui.empty(tab === 'sent' ? '아직 보낸 문서가 없습니다. 문서 화면에서 [원클릭 발송]을 눌러 보세요.' : '받은 문서가 없습니다.', 'send'))}
       </div></div>`;
-    el.querySelectorAll('[data-n]').forEach((a) => a.addEventListener('click', () => WD.tx((db2) => { const n = db2.notifications.find((x) => x.id === a.dataset.n); if (n) n.read = true; })));
-    el.querySelector('[data-readall]').addEventListener('click', () => { WD.tx((db2) => db2.notifications.forEach((n) => { if (n.userId === u.id) n.read = true; })); WD.app.refresh(); });
-    el.querySelectorAll('[data-delp]').forEach((b) => b.addEventListener('click', () => { WD.tx((db2) => { db2.presets = db2.presets.filter((x) => x.id !== b.dataset.delp); }); WD.app.refresh(); }));
+    el.querySelectorAll('[data-doc]').forEach((a) => a.addEventListener('click', () => WD.tx((d2) => d2.notifications.forEach((n) => { if (n.userId === u.id && n.docId === a.dataset.doc) n.read = true; }))));
+    el.querySelectorAll('[data-n]').forEach((a) => a.addEventListener('click', () => WD.tx((d2) => { const n = d2.notifications.find((x) => x.id === a.dataset.n); if (n) n.read = true; })));
+    el.querySelector('[data-readall]').addEventListener('click', () => { WD.tx((d2) => d2.notifications.forEach((n) => { if (n.userId === u.id) n.read = true; })); WD.app.refresh(); });
   };
 
   /* ---------------- 결재·보완 워크플로우 ---------------- */
   V.workflow = (el, p, query, u) => {
     const db = WD.db;
-    const scope = query.scope || (u.role === 'ceo' ? 'all' : 'mine');
+    const scope = query.scope || (WD.isTop(u) ? 'all' : 'mine');
     const docs = db.documents.filter((d) => d.status !== 'DRAFT' && WD.sec.canView(d, u) && (scope === 'all' || d.ownerId === u.id || d.assigneeId === u.id));
     const cols = ['PENDING', 'REVISION_REQUIRED', 'RESUBMITTED', 'APPROVED'];
     const lastEv = (d, to) => [...db.wfEvents].reverse().find((e) => e.docId === d.id && (!to || e.to === to));
     const card = (d) => {
       const rev = d.status === 'REVISION_REQUIRED' ? lastEv(d, 'REVISION_REQUIRED') : null;
       const revCount = db.wfEvents.filter((e) => e.docId === d.id && e.to === 'REVISION_REQUIRED').length;
-      const canAct = u.role === 'ceo' && ['PENDING', 'RESUBMITTED'].includes(d.status);
+      const canAct = WD.isTop(u) && ['PENDING', 'RESUBMITTED'].includes(d.status);
       const canResub = d.status === 'REVISION_REQUIRED' && WD.wf.canTransition(d, 'RESUBMITTED', u);
       return `<div class="kcard">
         <a href="#/doc/${d.id}" class="kc-title">${WD.ui.kindIcon(d.kind)}<b>${esc(d.title)}</b></a>
@@ -53,7 +85,7 @@
     el.innerHTML = `<div class="page">
       <div class="page-head"><div><h1>결재 · 서류 보완 워크플로우</h1>
         <p class="muted">PENDING(제출) → REVISION_REQUIRED(보완 요청·사유 기록) → RESUBMITTED(수정 후 재제출) → APPROVED(최종 승인·잠금). 모든 단계는 버전(v1, v2…)과 함께 타임라인에 기록됩니다.</p></div>
-        <div class="seg"><a class="${scope === 'mine' ? 'active' : ''}" href="#/workflow?scope=mine">내 문서</a><a class="${scope === 'all' ? 'active' : ''}" href="#/workflow?scope=all">${u.role === 'ceo' ? '전체' : '열람 가능 전체'}</a></div></div>
+        <div class="seg"><a class="${scope === 'mine' ? 'active' : ''}" href="#/workflow?scope=mine">내 문서</a><a class="${scope === 'all' ? 'active' : ''}" href="#/workflow?scope=all">${WD.isTop(u) ? '전체' : '열람 가능 전체'}</a></div></div>
       <div class="flow-steps">${cols.map((c, i) => `<div class="fs ${WD.STATUS[c].cls}"><b>${WD.STATUS[c].label}</b><small>${c}</small><em>${docs.filter((d) => d.status === c).length}</em></div>${i < 3 ? `<span class="fs-arrow">${I('arrow')}</span>` : ''}`).join('')}</div>
       <div class="kanban">${cols.map((c) => `<div class="kcol"><div class="kcol-head">${WD.ui.status(c)}<em>${docs.filter((d) => d.status === c).length}</em></div>${docs.filter((d) => d.status === c).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)).map(card).join('') || '<p class="muted tiny pad">없음</p>'}</div>`).join('')}</div>
     </div>`;
@@ -93,7 +125,7 @@
 
   V.checklist = (el, p, query, u) => {
     const db = WD.db;
-    const isCEO = u.role === 'ceo';
+    const isCEO = WD.isTop(u);
     const people = isCEO ? WD.staffUsers() : [u];
     const rows = people.map((x) => {
       const set = WD.wf.checklistFor(x);

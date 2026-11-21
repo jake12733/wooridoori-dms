@@ -79,16 +79,17 @@
     if (hadOld) { try { await WD.files.clear(); } catch (e) { /* noop */ } sessionStorage.removeItem('wd_sid'); }
     return true;
   };
-  WD.needsSetup = () => { WD.load(); return !WD.db || !WD.db.users.some((u) => u.role === 'ceo' && u.status === 'ACTIVE'); };
+  WD.needsSetup = () => { WD.load(); return !WD.db || !WD.db.users.some((u) => WD.isTop({ role: WD.effectiveRole(u) }) && u.status === 'ACTIVE'); };
 
   /** 최초 대표 계정 생성 (대표가 하나도 없을 때만) */
   WD.createFirstAdmin = async ({ name, email, password, title }) => {
-    if (!WD.needsSetup()) throw new Error('이미 대표 계정이 있습니다.');
+    if (!WD.needsSetup()) throw new Error('이미 대표/관리자 계정이 있습니다.');
     const pwHash = await WD.sha256('wooridoori::' + password);
     return WD.tx((db) => {
-      const u = { id: WD.uid('u'), loginId: email, email, name, role: 'ceo', title: title || '원장', empType: '정규직', dept: '경영', joinedAt: WD.ymd(), phone: '', workStart: '09:00', workEnd: '18:00', pwHash, status: 'ACTIVE', createdAt: WD.now() };
+      const role = WD.fixedRole(email) || 'ceo';
+      const u = { id: WD.uid('u'), loginId: email, email, name, role, title: title || (role === 'admin' ? '관리자' : '원장'), empType: '정규직', dept: '경영', joinedAt: WD.ymd(), phone: '', workStart: '09:00', workEnd: '18:00', pwHash, status: 'ACTIVE', createdAt: WD.now() };
       db.users.push(u);
-      WD.audit('USER_CREATE', { type: 'user', id: u.id, name: u.name, actorName: u.name }, '최초 대표 계정 생성');
+      WD.audit('USER_CREATE', { type: 'user', id: u.id, name: u.name, actorName: u.name }, `최초 ${WD.ROLE_LABEL[role]} 계정 생성`);
       return u;
     });
   };

@@ -24,8 +24,8 @@
     canTransition(doc, to, u = WD.auth.currentRaw()) {
       const who = RULES[`${doc.status}>${to}`];
       if (!who || !u) return false;
-      if (who === 'ceo') return u.role === 'ceo';
-      return u.role === 'ceo' || doc.ownerId === u.id || doc.assigneeId === u.id;
+      if (who === 'ceo') return WD.isTop(u);
+      return WD.isTop(u) || doc.ownerId === u.id || doc.assigneeId === u.id;
     },
 
     /** 상태 전이 (tx 내부 사용 가능하도록 db 인자) */
@@ -55,6 +55,7 @@
 
     /** 새 버전 저장 (v1, v2 …) */
     saveVersion(docId, content, note = '') {
+      WD.blockPreview();
       const u = WD.auth.current(); if (!u) throw new Error('로그인 필요');
       return WD.tx((db) => {
         const d = db.documents.find((x) => x.id === docId);
@@ -68,11 +69,12 @@
       });
     },
 
-    createDoc({ title, kind, folderId, content, note = '최초 작성', status = 'DRAFT' }) {
+    createDoc({ title, kind, folderId, content, note = '최초 작성', status = 'DRAFT', sub = '' }) {
+      WD.blockPreview();
       const u = WD.auth.current(); if (!u) throw new Error('로그인 필요');
       const f = WD.folder(folderId);
       return WD.tx((db) => {
-        const d = { id: WD.uid('doc'), title, kind, folderId, ownerId: u.id, status, version: 1, locked: false, recipients: [], assigneeId: null, legalHold: !!f?.legal, createdAt: WD.now(), updatedAt: WD.now() };
+        const d = { id: WD.uid('doc'), title, kind, folderId, ownerId: u.id, status, version: 1, locked: false, recipients: [], assigneeId: null, legalHold: !!f?.legal, sub: sub || '', createdAt: WD.now(), updatedAt: WD.now() };
         db.documents.push(d);
         db.versions.push({ id: WD.uid('ver'), docId: d.id, version: 1, authorId: u.id, at: WD.now(), note, content });
         WD.audit('DOC_CREATE', { type: 'document', id: d.id, name: title }, `${WD.folderPath(folderId)} · ${kind}`);
@@ -84,6 +86,7 @@
     ACTION_LABEL: { SUBMIT_CEO: '대표 결재·제출', REQUEST_USER: '서명·보완 요청', SAVE_FOLDER: '폴더 저장·공유', BROADCAST: '전체 발송', DEPT: '부서 발송', CUSTOM: '직접 선택 발송' },
 
     dispatch(docId, preset, extra = {}) {
+      WD.blockPreview();
       const u = WD.auth.current(); if (!u) throw new Error('로그인 필요');
       const res = WD.tx((db) => {
         const d = db.documents.find((x) => x.id === docId);
@@ -93,7 +96,7 @@
         let targets = []; let statusChange = null; let folderMsg = '';
         switch (preset.action) {
           case 'SUBMIT_CEO':
-            targets = active.filter((x) => x.role === 'ceo').map((x) => x.id);
+            targets = active.filter((x) => WD.isTop(x)).map((x) => x.id);
             if (d.status === 'DRAFT') statusChange = 'PENDING';
             else if (d.status === 'REVISION_REQUIRED') statusChange = 'RESUBMITTED';
             break;
@@ -109,10 +112,13 @@
             break; }
           case 'BROADCAST': targets = active.filter((x) => x.id !== u.id).map((x) => x.id); break;
           case 'DEPT': targets = active.filter((x) => x.dept === preset.dept && x.id !== u.id).map((x) => x.id); break;
-          case 'CUSTOM': targets = (extra.targets || []).filter((id) => active.some((x) => x.id === id)); if (extra.folderId) { d.folderId = extra.folderId; folderMsg = ` → ${WD.folderPath(extra.folderId)}`; } break;
+          case 'CUSTOM': targets = (extra.targets || []).filter((id) => active.some((x) => x.id === id)); if (extra.folderId) { d.folderId = extra.folderId; folderMsg = ` → ${WD.folderPath(extra.folderId)}`; }
+            // 대표·관리자에게 보내면 결재 제출로 처리 (작성 중 → 제출됨, 보완 요청 → 재제출)
+            if (!WD.isTop(u) && targets.some((t) => WD.isTop(active.find((x) => x.id === t)))) { if (d.status === 'DRAFT') statusChange = 'PENDING'; else if (d.status === 'REVISION_REQUIRED') statusChange = 'RESUBMITTED'; }
+            break;
           default: throw new Error('알 수 없는 프리셋');
         }
-        targets = [...new Set(targets)].filter((t) => t !== u.id || preset.action === 'SUBMIT_CEO' && u.role === 'ceo');
+        targets = [...new Set(targets)].filter((t) => t !== u.id || preset.action === 'SUBMIT_CEO' && WD.isTop(u));
         if (statusChange) {
           if (statusChange === 'RESUBMITTED' && d.revisionAtVersion && d.version <= d.revisionAtVersion) throw new Error(`보완 요청 이후 수정된 버전이 없습니다. 수정·저장 후 다시 발송하세요.`);
           db.wfEvents.push({ id: WD.uid('wf'), docId, from: d.status, to: statusChange, actorId: u.id, reason: '', at: WD.now(), version: d.version });
@@ -124,7 +130,7 @@
         const msg = extra.message || '';
         const titleMap = { SUBMIT_CEO: statusChange === 'RESUBMITTED' ? '재제출' : '결재 요청', REQUEST_USER: '서명·보완 요청', SAVE_FOLDER: '공유됨', BROADCAST: '공지', DEPT: '부서 공유', CUSTOM: '문서 수신' };
         targets.forEach((t) => WD.notify(t, { title: `${titleMap[preset.action]}: ${d.title} (v${d.version})`, body: `${u.name}님이 '${preset.name}'(으)로 발송했습니다.${msg ? ' · ' + msg : ''}`, link: `#/doc/${d.id}`, type: preset.action === 'SUBMIT_CEO' ? 'APPROVAL' : preset.action === 'REQUEST_USER' ? 'SIGN' : 'INFO', docId: d.id }));
-        const rec = { id: WD.uid('dsp'), docId, presetName: preset.name, action: preset.action, targets, folderId: preset.folderId || extra.folderId || null, senderId: u.id, message: msg, at: WD.now(), version: d.version };
+        const rec = { id: WD.uid('dsp'), docId, presetName: preset.name, action: preset.action, targets, folderId: preset.folderId || extra.folderId || null, senderId: u.id, senderName: u.name, senderRole: u.realRole || u.role, docTitle: d.title, targetNames: targets.map((t) => ({ name: WD.userName(t), role: WD.effectiveRole(WD.user(t)) })), message: msg, at: WD.now(), version: d.version };
         db.dispatches.unshift(rec);
         WD.audit('DISPATCH', { type: 'document', id: d.id, name: d.title }, `${preset.name}${folderMsg} → ${targets.map((t) => WD.userName(t)).join(', ') || '(수신자 없음)'}`);
         return { doc: d, targets, rec };

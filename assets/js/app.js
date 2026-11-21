@@ -7,7 +7,7 @@
   const V = (WD.views = WD.views || {});
   let cleanups = [];
   const ALL = ['ceo', 'admin', 'manager', 'staff'];
-  const CEO = ['ceo'];
+  const CEO = ['ceo', 'admin']; // 최고 권한: 대표·관리자 동일
 
   // 메뉴: roles에 포함된 직급에게만 보임 (라우트 권한과 동일)
   const NAV = [
@@ -16,9 +16,9 @@
     { path: '/attendance', label: '출결·근태', icon: 'clock', roles: ALL },
     { path: '/workflow', label: '결재·보완', icon: 'flow', badge: 'wf', roles: CEO },
     { path: '/inbox', label: '알림함', icon: 'inbox', badge: 'inbox', roles: ALL },
-    { path: '/contracts', label: '계약서', icon: 'contract', badge: 'contract', roles: ALL },
+    { path: '/contracts', label: '근로·위촉계약서', icon: 'contract', badge: 'contract', roles: CEO },
     { path: '/checklist', label: '필수 서류', icon: 'list', roles: ALL },
-    { path: '/people', label: '직원·계정 관리', icon: 'users', roles: ['ceo', 'admin'] },
+    { path: '/people', label: '직원·계정 관리', icon: 'users', roles: CEO },
     { sec: '🔒 대표 전용', roles: CEO },
     { path: '/finance', label: '경영·매출 장부', icon: 'chart', roles: CEO },
     { path: '/docs/c_ceo', label: '대표 전용 보안 폴더', icon: 'lock', roles: CEO },
@@ -30,12 +30,12 @@
   const ROUTES = [
     ['/dashboard', 'dashboard', CEO], ['/docs', 'docs', ALL], ['/docs/:folder', 'docs', ALL], ['/doc/:id', 'docView', ALL], ['/new/:kind', 'newDoc', ALL],
     ['/templates', 'templates', ALL], ['/inbox', 'inbox', ALL], ['/workflow', 'workflow', CEO], ['/checklist', 'checklist', ALL],
-    ['/contracts', 'contracts', ALL], ['/contract/:id', 'contract', ALL], ['/attendance', 'attendance', ALL],
-    ['/finance', 'finance', CEO], ['/people', 'people', ['ceo', 'admin']], ['/vault', 'vault', CEO], ['/audit', 'audit', CEO], ['/launcher', 'launcher', CEO],
+    ['/contracts', 'contracts', CEO], ['/contract/:id', 'contract', CEO], ['/attendance', 'attendance', ALL],
+    ['/finance', 'finance', CEO], ['/people', 'people', CEO], ['/vault', 'vault', CEO], ['/audit', 'audit', CEO], ['/launcher', 'launcher', CEO],
     ['/system', 'system', CEO],
   ];
   /** 직급별 첫 화면: 대표=대시보드, 그 외=통합 문서함 */
-  WD.homeFor = (u) => (u?.role === 'ceo' ? '#/dashboard' : '#/docs');
+  WD.homeFor = (u) => (WD.isTop(u) ? '#/dashboard' : '#/docs');
 
   function parseHash() {
     const raw = location.hash.replace(/^#/, '') || '/';
@@ -55,8 +55,8 @@
   function badgeCounts(u) {
     const db = WD.db;
     const inbox = db.notifications.filter((n) => n.userId === u.id && !n.read).length;
-    const wf = u.role === 'ceo' ? db.documents.filter((d) => ['PENDING', 'RESUBMITTED'].includes(d.status)).length : 0;
-    const contract = u.role === 'ceo'
+    const wf = WD.isTop(u) ? db.documents.filter((d) => ['PENDING', 'RESUBMITTED'].includes(d.status)).length : 0;
+    const contract = WD.isTop(u)
       ? WD.wf.expiryAlerts().filter((a) => a.kind === '계약 종료' && !a.renewed).length + db.contracts.filter((c) => c.status === 'SIGNED').length
       : db.contracts.filter((c) => c.userId === u.id && c.status === 'SENT').length;
     return { inbox, wf, contract };
@@ -64,7 +64,7 @@
 
   function shell(u, route) {
     const counts = badgeCounts(u);
-    const isCEO = u.role === 'ceo';
+    const isCEO = WD.isTop(u);
     const nav = NAV.filter((n) => n.roles.includes(u.role)).map((n) => {
       if (n.sec) return `<div class="nav-sec ceo-sec">${n.sec}</div>`;
       const active = route.path === n.path
@@ -81,10 +81,11 @@
           <span class="brand-mark"></span>
           <span class="brand-txt"><b>우리두리사회적협동조합</b><small>문서관리시스템</small></span>
         </a>
-        <div class="side-user">${WD.ui.avatar(u, 40)}<div><b>${WD.esc(u.name)}</b>${WD.roleBadge(u.role)}</div></div>
+        <div class="side-user">${WD.ui.avatar(u, 40)}<div><b>${WD.esc(u.name)}</b>${WD.roleBadge(u.realRole || u.role)}</div></div>
+        ${WD.TOP_ROLES.includes(u.realRole) ? `<div class="preview-box">${u.preview ? `<button class="btn sm block preview-exit" data-preview="">${I('refresh')} 원래 권한으로 돌아가기</button>` : `<div class="dd"><button class="btn sm block preview-btn" data-dd="pv">${I('eye')} 직원 화면 미리보기</button><div class="dd-menu" data-ddm="pv"><button class="dd-item" data-preview="staff">${WD.roleBadge('staff')} 직원 기준으로 보기</button><button class="dd-item" data-preview="manager">${WD.roleBadge('manager')} 실장 기준으로 보기</button></div></div>`}</div>` : ''}
         <nav class="nav">${nav}</nav>
         <div class="side-foot">
-          <div class="sec-pill ${isCEO ? 'ceo' : 'staff'}">${I(isCEO ? 'stamp' : 'lock')}<span>${isCEO ? '대표 · 다운로드 허용' : '웹 열람전용 · 다운로드 차단'}</span></div>
+          <div class="sec-pill ${isCEO ? 'ceo' : 'staff'}">${I(isCEO ? 'stamp' : 'lock')}<span>${isCEO ? `${WD.ROLE_LABEL[u.role]} · 최고 권한 · 다운로드 허용` : '웹 열람전용 · 다운로드 차단'}</span></div>
         </div>
       </aside>
       <div class="side-dim" data-close-side></div>
@@ -100,7 +101,8 @@
                 ${myNotes.length ? myNotes.map((n) => `<a class="ntf ${n.read ? '' : 'unread'}" href="${n.link || '#/inbox'}" data-ntf="${n.id}"><span class="ntf-type t-${n.type}"></span><span><b>${WD.esc(n.title)}</b><small>${WD.esc(n.body)}</small><time>${WD.fmtDT(n.at)}</time></span></a>`).join('') : '<p class="muted pad">새 알림이 없습니다.</p>'}
               </div>
             </div>
-            <div class="user-chip">${WD.ui.avatar(u, 32)}<span><b>${WD.esc(u.name)}</b>${WD.roleBadge(u.role)}</span></div>
+            ${u.preview ? `<div class="preview-banner">${I('eye')}<b>직원 화면 미리보기 중</b>${WD.roleBadge(u.role)}<button class="btn sm" data-preview="">원래 권한으로 돌아가기</button></div>` : ''}
+            <div class="user-chip">${WD.ui.avatar(u, 32)}<span><b>${WD.esc(u.name)}</b>${WD.roleBadge(u.realRole || u.role)}</span></div>
             <button class="icon-btn" data-logout title="로그아웃" aria-label="로그아웃">${I('logout')}</button>
           </div>
         </header>
@@ -116,6 +118,7 @@
     root.querySelector('[data-close-side]')?.addEventListener('click', () => document.body.classList.remove('side-open'));
     root.querySelectorAll('[data-dd]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); root.querySelector(`[data-ddm="${b.dataset.dd}"]`).classList.toggle('open'); }));
     document.addEventListener('click', closeDD);
+    root.querySelectorAll('[data-preview]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); WD.auth.setPreview(b.dataset.preview || null); const nu = WD.auth.current(); WD.ui.toast(b.dataset.preview ? `${WD.ROLE_LABEL[b.dataset.preview]} 화면으로 보는 중입니다. 실제 권한은 그대로예요.` : '원래 권한으로 돌아왔습니다.'); const h = WD.homeFor(nu); if (location.hash === h) route(); else location.hash = h; }));
     root.querySelectorAll('[data-ntf]').forEach((a) => a.addEventListener('click', () => WD.tx((db) => { const n = db.notifications.find((x) => x.id === a.dataset.ntf); if (n) n.read = true; })));
   }
   function closeDD() { document.querySelectorAll('.dd-menu.open').forEach((m) => m.classList.remove('open')); }
