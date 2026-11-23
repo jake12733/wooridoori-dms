@@ -91,6 +91,31 @@
   /* ---------- 감사 로그 (Audit Trail) ----------
    * 모든 민감 행위는 이 함수를 거쳐 append-only 로 기록됩니다.
    * 운영 버전: audit_logs 테이블 INSERT 전용 권한 + 해시 체인(prev_hash)으로 위변조 탐지. */
+  /* ---------- 접속 IP ----------
+   * 정적 웹앱이라 서버가 없어서, 공용 IP 확인 서비스(ipify → ipinfo)로 이 기기의 공인 IP를 조회해 기록합니다.
+   * 세션마다 1회 조회(sessionStorage 'wd_ip'). 조회 전에 생긴 기록은 IP가 확인되면 채워 넣습니다.
+   * 운영 버전: 서버가 요청의 실제 접속 IP(X-Forwarded-For 등)를 audit_logs.ip 에 기록하도록 교체하세요. */
+  WD.clientIp = sessionStorage.getItem('wd_ip') || '';
+  const ipPending = new Set();
+  const fetchJson = async (url) => {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 5000);
+    try { const r = await fetch(url, { signal: ctl.signal, cache: 'no-store' }); return r.ok ? await r.json() : null; }
+    catch (e) { return null; } finally { clearTimeout(t); }
+  };
+  WD.ipReady = (async () => {
+    if (WD.clientIp) return WD.clientIp;
+    const j = (await fetchJson('https://api.ipify.org?format=json')) || (await fetchJson('https://ipinfo.io/json'));
+    const ip = j && typeof j.ip === 'string' && /^[0-9a-fA-F:.]{3,45}$/.test(j.ip) ? j.ip : '';
+    if (ip) {
+      WD.clientIp = ip; sessionStorage.setItem('wd_ip', ip);
+      if (ipPending.size) {
+        try { WD.load(); (WD.db?.auditLogs || []).forEach((l) => { if (ipPending.has(l.id) && !l.ip) l.ip = ip; }); WD.save(); } catch (e) { console.warn('ip backfill', e); }
+        ipPending.clear();
+      }
+    }
+    return ip;
+  })();
+
   WD.audit = (action, target = {}, detail = '') => {
     if (!WD.db) return;
     const u = WD.auth?.currentRaw?.();
@@ -99,9 +124,10 @@
       id: WD.uid('log'), at: WD.now(),
       userId: u?.id || null, userName: u?.name || target.actorName || '시스템', role: u?.role || '-',
       action, targetType: target.type || '', targetId: target.id || '', targetName: target.name || '',
-      detail: String(detail || ''), ua: navigator.userAgent.replace(/\s+/g, ' ').slice(0, 80),
+      detail: String(detail || ''), ip: WD.clientIp || '', ua: navigator.userAgent.replace(/\s+/g, ' ').slice(0, 80),
       prevId: prev?.id || null,
     };
+    if (!row.ip) ipPending.add(row.id);
     WD.db.auditLogs.unshift(row);
     if (WD.db.auditLogs.length > 5000) WD.db.auditLogs.length = 5000;
     return row;
