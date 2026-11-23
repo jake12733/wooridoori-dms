@@ -532,6 +532,8 @@ body.staff-mode .x-spreadsheet-toolbar-btn:has(.print), body.staff-mode .x-sprea
 .audit-tbl td { font-size: 13px; }
 .audit-tbl td small { color: var(--muted); }
 .audit-tbl tr.deny td { background: #fff7f5; }
+.audit-tbl .ip-tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 6px; background: #eef3f0; color: #3d5a4a; font: 600 11.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; vertical-align: 1px; }
+.audit-tbl .ip-tag.none { background: #f3f3f1; color: #9a9a96; font-family: inherit; font-weight: 500; }
 .act { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 6px; background: #f1eee8; }
 .act-doc { background: var(--blue-l); color: var(--blue); } .act-wf, .act-contract { background: var(--g1); color: var(--g7); } .act-dispatch { background: var(--amber-l); color: var(--amber-d); }
 .act-resign, .act-session, .act-vault { background: var(--violet-l); color: var(--violet); } .act-deny { background: var(--red-l) !important; color: var(--red) !important; }
