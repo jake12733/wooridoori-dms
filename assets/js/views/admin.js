@@ -89,20 +89,20 @@
     if (q.user) logs = logs.filter((l) => l.userName === q.user);
     if (q.from) logs = logs.filter((l) => l.at.slice(0, 10) >= q.from);
     if (q.to) logs = logs.filter((l) => l.at.slice(0, 10) <= q.to);
-    if (q.s) logs = logs.filter((l) => `${l.targetName} ${l.detail}`.toLowerCase().includes(q.s.toLowerCase()));
+    if (q.s) logs = logs.filter((l) => `${l.targetName} ${l.detail} ${l.ip || ''}`.toLowerCase().includes(q.s.toLowerCase()));
     const qs = (o) => '#/audit?' + new URLSearchParams(Object.fromEntries(Object.entries({ ...q, ...o }).filter(([, v]) => v))).toString();
     el.innerHTML = `<div class="page">
-      <div class="page-head"><div><h1>감사 로그 (Audit Trail)</h1><p class="muted">문서 열람 시각, 수정 버전(v1, v2…), 원클릭 발송, 승인/반려, 반출·차단, 퇴사 권한 회수 내역을 사용자·일시 기준으로 자동 기록합니다. 기록은 추가만 가능(append-only)하며 대표만 조회할 수 있습니다.</p></div>
+      <div class="page-head"><div><h1>감사 로그 (Audit Trail)</h1><p class="muted">문서 열람 시각, 접속 IP, 수정 버전(v1, v2…), 원클릭 발송, 승인/반려, 반출·차단, 퇴사 권한 회수 내역을 사용자·일시 기준으로 자동 기록합니다. 기록은 추가만 가능(append-only)하며 대표만 조회할 수 있습니다.</p></div>
         <button class="btn ghost" data-csv>${I('download')} CSV 반출</button></div>
       <div class="chips">${Object.entries(GROUPS).map(([k, v]) => `<a class="chip ${g === k ? 'active' : ''} ${k === 'deny' ? 'danger' : ''}" href="${qs({ f: k === 'all' ? '' : k })}">${v} <em>${db.auditLogs.filter((l) => inGroup(l.action, k)).length}</em></a>`).join('')}</div>
       <form class="card filters" id="af"><select name="user"><option value="">모든 사용자</option>${users.map((x) => `<option ${q.user === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
-        <input type="date" name="from" value="${q.from || ''}"><span>~</span><input type="date" name="to" value="${q.to || ''}"><input name="s" placeholder="대상·상세 검색" value="${esc(q.s || '')}"><button class="btn primary sm">조회</button><a class="btn ghost sm" href="#/audit">초기화</a></form>
+        <input type="date" name="from" value="${q.from || ''}"><span>~</span><input type="date" name="to" value="${q.to || ''}"><input name="s" placeholder="대상·상세·IP 검색" value="${esc(q.s || '')}"><button class="btn primary sm">조회</button><a class="btn ghost sm" href="#/audit">초기화</a></form>
       <div class="card flush scroll-x"><table class="tbl audit-tbl"><thead><tr><th>일시</th><th>사용자</th><th>권한</th><th>행위</th><th>대상</th><th>상세</th></tr></thead><tbody>
-      ${logs.slice(0, 400).map((l) => `<tr class="${DENY.includes(l.action) ? 'deny' : ''}"><td class="nowrap muted">${WD.fmtDT(l.at)}<small>:${new Date(l.at).getSeconds().toString().padStart(2, '0')}</small></td><td class="nowrap"><b>${esc(l.userName)}</b></td><td><span class="tag">${esc(l.role)}</span></td><td class="nowrap"><span class="act act-${l.action.split('_')[0].toLowerCase()} ${DENY.includes(l.action) ? 'act-deny' : ''}">${esc(WD.AUDIT_LABEL[l.action] || l.action)}</span></td><td>${l.targetType === 'document' && WD.doc(l.targetId) ? `<a href="#/doc/${l.targetId}">${esc(l.targetName)}</a>` : esc(l.targetName)}</td><td class="muted">${esc(l.detail)}</td></tr>`).join('')}
+      ${logs.slice(0, 400).map((l) => `<tr class="${DENY.includes(l.action) ? 'deny' : ''}"><td class="nowrap muted">${WD.fmtDT(l.at)}<small>:${new Date(l.at).getSeconds().toString().padStart(2, '0')}</small></td><td class="nowrap"><b>${esc(l.userName)}</b>${l.ip ? `<span class="ip-tag" title="접속 IP">${esc(l.ip)}</span>` : '<span class="ip-tag none" title="IP 기록 기능 추가 전 기록">IP 없음</span>'}</td><td><span class="tag">${esc(l.role)}</span></td><td class="nowrap"><span class="act act-${l.action.split('_')[0].toLowerCase()} ${DENY.includes(l.action) ? 'act-deny' : ''}">${esc(WD.AUDIT_LABEL[l.action] || l.action)}</span></td><td>${l.targetType === 'document' && WD.doc(l.targetId) ? `<a href="#/doc/${l.targetId}">${esc(l.targetName)}</a>` : esc(l.targetName)}</td><td class="muted">${esc(l.detail)}</td></tr>`).join('')}
       </tbody></table>${logs.length ? (logs.length > 400 ? `<p class="muted pad tiny">최근 400건 표시 (전체 ${logs.length}건 · CSV로 전체 반출)</p>` : '') : WD.ui.empty('조건에 맞는 기록이 없습니다.', 'audit')}</div></div>`;
     el.querySelector('#af').addEventListener('submit', (e) => { e.preventDefault(); const f = new FormData(e.target); location.hash = qs({ user: f.get('user'), from: f.get('from'), to: f.get('to'), s: f.get('s') }); });
     el.querySelector('[data-csv]').addEventListener('click', () => WD.sec.exportDoc({ type: 'audit', title: '감사로그' }, 'CSV', () => {
-      const csv = ['일시,사용자,권한,행위,대상유형,대상,상세,브라우저', ...logs.map((l) => [l.at, l.userName, l.role, WD.AUDIT_LABEL[l.action] || l.action, l.targetType, l.targetName, l.detail, l.ua].map((x) => `"${String(x ?? '').replace(/"/g, '""')}"`).join(','))].join('\r\n');
+      const csv = ['일시,사용자,접속IP,권한,행위,대상유형,대상,상세,브라우저', ...logs.map((l) => [l.at, l.userName, l.ip || '', l.role, WD.AUDIT_LABEL[l.action] || l.action, l.targetType, l.targetName, l.detail, l.ua].map((x) => `"${String(x ?? '').replace(/"/g, '""')}"`).join(','))].join('\r\n');
       WD.sec.saveBlob(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), `우리두리_감사로그_${WD.ymd()}.csv`);
     }));
   };
